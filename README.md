@@ -177,6 +177,57 @@ Checkbox options:
 Important:
 - Jira credentials are **not entered in the UI**; they come from environment variables (`JIRA_USERNAME`/`JIRA_PASSWORD` or `JIRA_EMAIL`/`JIRA_API_TOKEN`).
 
+## Tabs
+
+The app now has two report tabs:
+
+- `Legacy Reports`: existing export workflow (`/preview-jql`, `/run-export`) preserved for backward compatibility.
+- `CSMS Executive Incident Summary`: new executive dashboard comparing two rolling periods.
+
+### CSMS Executive Incident Summary Inputs
+
+- `Jira Search Endpoint` (`base_url`)
+- `Projects` (`projects`) default `CSSD,CSD,CDF`
+- `Report Generation Date/Time` (`report_datetime`)
+- `Period Length (days)` (`period_length`, default `15`)
+- `Issue Types` (`issue_types`)
+- `Status Filters` (`statuses`)
+- `Components` (`components`)
+- `Page Size` (`page_size`)
+- `Max Issues` (`max_issues`)
+- `Process Alignment %` (`process_alignment_pct`, default `60`)
+
+### CSMS Period Windows
+
+For report date `R` and period length `N`:
+
+- `Period 2` = `R-(N-1)` through `R`
+- `Period 1` = the preceding `N` days ending one day before `Period 2`
+
+Example for `R=2026-04-28`, `N=15`:
+- `Period 2`: `2026-04-14` to `2026-04-28`
+- `Period 1`: `2026-03-30` to `2026-04-13`
+
+### CSMS Business Rules
+
+- CSSD final status: `Closed`
+- CSD final status: `Ready For Production Users`
+- Backlog counts issues not yet in project final status.
+
+### CSMS Export Artifacts
+
+After `Refresh from Jira API`, the dashboard exposes:
+
+- CSV export (ZIP): `raw_period1`, `raw_period2`, and KPI table CSVs
+- Excel export: one workbook with separate sheets for period raw rows and KPI metrics
+- PDF export: executive summary snapshot (KPIs + narratives)
+
+### CSMS Troubleshooting
+
+- Jira 400/500 API errors are returned with server response details in JSON.
+- If Jira returns a referral ID in an error page, include it when contacting Jira administrators.
+- For large result sets, increase `page_size` and keep `max_issues=0` to allow full pagination.
+
 ## Summary Output (Current Schema)
 
 `issue_summary_*.csv` includes:
