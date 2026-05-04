@@ -9,7 +9,7 @@ import zipfile
 import uuid
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -23,41 +23,70 @@ from requests.auth import HTTPBasicAuth
 app = Flask(__name__)
 STATUS_TRANSITION_SLOTS = 30
 CSMS_EXPORT_CACHE: Dict[str, Dict[str, str]] = {}
+TEAM_EXPORT_CACHE: Dict[str, Dict[str, str]] = {}
+RESOLUTION_SLA_FIELD_CACHE: Dict[str, str] = {}
+
+# Status substrings rolled up as "resolved" style outcomes for Team Posture resolved KPIs.
+TEAM_POSTURE_RESOLVED_STATUS_KEYWORDS: Tuple[str, ...] = (
+    "resolved",
+    "dev-completed",
+    "closed",
+    "ready for production users",
+    "completed",
+    "duplicate",
+)
 
 HTML = """
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Jira Export Helper</title>
+  <title>CSMS Operations Dashboard</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     :root {
-      --bg: #07132c;
-      --panel: #0f1d3a;
-      --panel-2: #1e2f4e;
-      --text: #e8ecff;
-      --muted: #95a6cc;
-      --accent: #36e0d0;
-      --accent-2: #2bb5ff;
-      --danger: #ff7098;
-      --border: #21385f;
-      --body-grad-start: #07122a;
-      --body-grad-end: #0a1734;
-      --card-bg: rgba(14, 28, 57, 0.95);
-      --pre-bg: #0b1228;
-      --pre-text: #dbe7ff;
-      --download-bg: #18234a;
-      --download-text: #ffffff;
-      --btn-bg-start: #435f8e;
-      --btn-bg-end: #2b3d62;
-      --btn-border: #5c7ab0;
-      --btn-text: #f3f8ff;
-      --btn-shadow: rgba(2, 10, 27, 0.35);
-      --btn-muted-bg-start: #223250;
-      --btn-muted-bg-end: #1b2a47;
-      --btn-muted-border: #4d6a9e;
-      --btn-muted-text: #dce8ff;
+      --bg: #f3f7fb;
+      --panel: #ffffff;
+      --panel-2: #f7f9fc;
+      --text: #0f1f3a;
+      --muted: #637799;
+      --accent: #11b6ad;
+      --accent-2: #2f7af8;
+      --danger: #dc4b55;
+      --border: #d9e2f0;
+      --body-grad-start: #f7fafe;
+      --body-grad-end: #eef4fb;
+      --card-bg: #ffffff;
+      --pre-bg: #f8fbff;
+      --pre-text: #1d3358;
+      --download-bg: #eef4ff;
+      --download-text: #1b3360;
+      --btn-bg-start: #1f6ff2;
+      --btn-bg-end: #185bc7;
+      --btn-border: #2456a8;
+      --btn-text: #ffffff;
+      --btn-shadow: rgba(20, 61, 131, 0.22);
+      --btn-muted-bg-start: #ffffff;
+      --btn-muted-bg-end: #f5f8fe;
+      --btn-muted-border: #d6e0ef;
+      --btn-muted-text: #1a335b;
+      --side-bg: #082745;
+      --side-title: #f2fbff;
+      --side-btn-text: #d4e8ff;
+      --side-btn-active-start: #0ea7a2;
+      --side-btn-active-end: #0b8a86;
+      --side-btn-active-border: #0b8e89;
+      --action-btn-bg-start: #f9fbff;
+      --action-btn-bg-end: #edf3fd;
+      --action-btn-border: #d3e0f1;
+      --action-btn-text: #1a335b;
+      --heading-strong: #1c365f;
+      --kpi-strong: #0f2343;
+      --kpi-subtle: #08101f;
+      --trend-good: #0da38e;
+      --trend-bad: #dc4b55;
+      --member-icon-start: #7fd1ff;
+      --member-icon-end: #5db9ff;
     }
     :root[data-theme="light"] {
       --bg: #f3f7ff;
@@ -84,6 +113,42 @@ HTML = """
       --btn-muted-bg-end: #e8efff;
       --btn-muted-border: #c4d4f4;
       --btn-muted-text: #16315f;
+      --side-bg: #0d1c39;
+      --side-title: #d9e7ff;
+      --side-btn-text: #c8daf8;
+      --side-btn-active-start: #3a6fdf;
+      --side-btn-active-end: #2a57b8;
+      --side-btn-active-border: #3f6bc5;
+      --action-btn-bg-start: rgba(255, 255, 255, 0.12);
+      --action-btn-bg-end: rgba(255, 255, 255, 0.04);
+      --action-btn-border: rgba(202, 226, 255, 0.24);
+      --action-btn-text: #c9daf7;
+      --heading-strong: #1c365f;
+      --kpi-strong: #0f2343;
+      --kpi-subtle: #08101f;
+      --trend-good: #148a78;
+      --trend-bad: #c23f4f;
+      --member-icon-start: #8fd7ff;
+      --member-icon-end: #73c6ff;
+    }
+    :root[data-theme="dark"] {
+      --side-bg: #081a35;
+      --side-title: #dce8ff;
+      --side-btn-text: #c9daf7;
+      --side-btn-active-start: #6f96ea;
+      --side-btn-active-end: #4b72ca;
+      --side-btn-active-border: #6c8fd9;
+      --action-btn-bg-start: rgba(255, 255, 255, 0.12);
+      --action-btn-bg-end: rgba(255, 255, 255, 0.04);
+      --action-btn-border: rgba(202, 226, 255, 0.24);
+      --action-btn-text: #c9daf7;
+      --heading-strong: #cddcff;
+      --kpi-strong: #f1f5ff;
+      --kpi-subtle: #dce8ff;
+      --trend-good: #4fd1c5;
+      --trend-bad: #ff7098;
+      --member-icon-start: #8fd7ff;
+      --member-icon-end: #73c6ff;
     }
     * { box-sizing: border-box; }
     body {
@@ -93,9 +158,9 @@ HTML = """
       color: var(--text);
     }
     .wrap {
-      max-width: 1320px;
-      margin: 0 auto;
-      padding: 0 20px 48px;
+      max-width: 1800px;
+      margin: 0;
+      padding: 14px 18px 48px 124px;
     }
     .hero {
       display: grid;
@@ -106,9 +171,9 @@ HTML = """
     .card {
       background: var(--card-bg);
       border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 16px;
-      box-shadow: 0 10px 30px rgba(0,0,0,.24);
+      border-radius: 8px;
+      padding: 14px;
+      box-shadow: 0 1px 4px rgba(16, 45, 92, 0.08);
     }
     .hero-head {
       display: flex;
@@ -118,7 +183,14 @@ HTML = """
       margin-bottom: 10px;
     }
     h1 { margin: 0 0 10px; font-size: 44px; line-height: 1.05; }
-    h2 { margin: 0 0 12px; font-size: 18px; }
+    h2 {
+      margin: 0 0 10px;
+      font-size: 12px;
+      color: var(--heading-strong);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      font-weight: 700;
+    }
     p { color: var(--muted); line-height: 1.45; }
     form {
       display: grid;
@@ -163,11 +235,11 @@ HTML = """
     }
     .check input { width: auto; }
     button {
-      background: linear-gradient(180deg, var(--btn-bg-start), var(--btn-bg-end));
-      border: 1px solid var(--btn-border);
-      color: var(--btn-text);
+      background: linear-gradient(180deg, var(--action-btn-bg-start), var(--action-btn-bg-end));
+      border: 1px solid var(--action-btn-border);
+      color: var(--action-btn-text);
       font-weight: 700;
-      font-size: 13px;
+      font-size: 12px;
       letter-spacing: .01em;
       padding: 10px 14px;
       border-radius: 10px;
@@ -186,9 +258,9 @@ HTML = """
       box-shadow: 0 3px 7px var(--btn-shadow);
     }
     .muted-btn {
-      background: linear-gradient(180deg, var(--btn-muted-bg-start), var(--btn-muted-bg-end));
-      color: var(--btn-muted-text);
-      border: 1px solid var(--btn-muted-border);
+      background: linear-gradient(180deg, var(--action-btn-bg-start), var(--action-btn-bg-end));
+      color: var(--action-btn-text);
+      border: 1px solid var(--action-btn-border);
     }
     .theme-toggle {
       width: 40px;
@@ -203,12 +275,13 @@ HTML = """
     }
     pre {
       background: var(--pre-bg);
-      padding: 14px;
-      border-radius: 12px;
+      padding: 12px;
+      border-radius: 8px;
       color: var(--pre-text);
       white-space: pre-wrap;
       word-break: break-word;
       border: 1px solid var(--border);
+      margin: 0;
     }
     .downloads a {
       display: inline-block;
@@ -226,37 +299,65 @@ HTML = """
       color: var(--muted);
     }
     .app-nav {
-      position: sticky;
+      position: fixed;
+      left: 0;
       top: 0;
-      z-index: 10;
-      margin-bottom: 18px;
-      backdrop-filter: blur(8px);
-      width: 100vw;
-      max-width: 100vw;
-      margin-left: calc(50% - 50vw);
-      margin-right: calc(50% - 50vw);
+      bottom: 0;
+      width: 108px;
+      z-index: 30;
+      margin: 0;
       border-radius: 0;
+      border-left: 0;
+      border-top: 0;
+      border-bottom: 0;
+      padding: 14px 10px;
+      background: var(--side-bg);
     }
     .app-nav-shell {
       display: flex;
+      flex-direction: column;
       align-items: center;
-      justify-content: space-between;
+      justify-content: flex-start;
       gap: 12px;
-      flex-wrap: wrap;
+      height: 100%;
     }
     .app-nav-title {
-      font-size: 40px;
+      font-size: 10px;
       font-weight: 800;
-      letter-spacing: .01em;
+      letter-spacing: .06em;
       margin: 0;
-      color: var(--text);
-      white-space: nowrap;
+      color: var(--side-title);
+      text-align: center;
+      white-space: normal;
+      line-height: 1.25;
     }
     .app-nav-actions {
       display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+      width: 100%;
+      margin-top: 6px;
+    }
+    .app-nav .muted-btn {
+      width: 100%;
+      min-height: 38px;
+      padding: 8px 6px;
+      font-size: 11px;
+      border-radius: 8px;
+      text-align: center;
+      color: var(--side-btn-text);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04));
+      border-color: rgba(202, 226, 255, 0.24);
+      font-weight: 700;
+      letter-spacing: .02em;
+    }
+    .app-nav .theme-toggle,
+    .app-nav .auth-icon-btn {
+      font-size: 14px;
+      width: 100%;
+      height: 38px;
+      border-radius: 8px;
     }
     .auth-icon-btn {
       width: 40px;
@@ -269,30 +370,89 @@ HTML = """
       font-size: 18px;
       line-height: 1;
     }
-    .nav-link.active,
     .report-tab.active {
-      background: linear-gradient(90deg, var(--accent), var(--accent-2));
-      color: #08101f;
-      border-color: transparent;
-      box-shadow: 0 6px 14px rgba(24, 204, 206, 0.25);
+      background: linear-gradient(180deg, var(--side-btn-active-start), var(--side-btn-active-end));
+      color: var(--btn-text);
+      border-color: var(--side-btn-active-border);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
     }
     .app-section {
       scroll-margin-top: 94px;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
+    }
+    .member-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .member-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      color: var(--text);
+      cursor: pointer;
+      box-shadow: 0 3px 8px rgba(24, 63, 130, 0.14);
+      font-weight: 700;
+    }
+    .member-pill.active {
+      border-color: var(--accent-2);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-2) 30%, transparent), 0 6px 14px rgba(24, 63, 130, 0.2);
+    }
+    .member-icon {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: linear-gradient(90deg, var(--member-icon-start), var(--member-icon-end));
+      color: var(--kpi-subtle);
+      font-weight: 800;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+    }
+    .team-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(120px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .team-metric-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel-2);
+      padding: 12px;
+    }
+    .team-metric-card .label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .team-metric-card .value {
+      font-size: 26px;
+      font-weight: 800;
+      margin-top: 6px;
+      color: var(--accent);
     }
     .two-col {
       display: grid;
-      grid-template-columns: 1.2fr .95fr;
-      gap: 14px;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
     }
     .kpi-grid .kpi-card {
-      min-height: 126px;
+      min-height: 104px;
       background: var(--panel-2);
+      padding: 12px;
     }
     .kpi-grid {
       display: grid;
       grid-template-columns: repeat(4, minmax(180px, 1fr));
-      gap: 14px;
+      gap: 10px;
     }
     .tooltip-panel {
       margin-top: 10px;
@@ -302,6 +462,36 @@ HTML = """
       background: var(--panel-2);
       color: var(--muted);
       font-size: 13px;
+      max-width: 360px;
+      margin-left: 96px;
+    }
+    .notes-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(260px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .notes-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel-2);
+      padding: 12px;
+    }
+    .notes-card h3 {
+      margin: 0 0 8px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--heading-strong);
+    }
+    .notes-card p, .notes-card li {
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.4;
+    }
+    .notes-card ul {
+      margin: 0;
+      padding-left: 18px;
     }
     .legacy-chart-wrap {
       width: 100%;
@@ -310,49 +500,49 @@ HTML = """
       border-radius: 10px;
     }
     .legacy-chart-wrap.daily {
-      height: 200px; /* ~40% of prior ~500px */
+      height: 240px;
     }
     .legacy-chart-wrap.status {
-      height: 500px; /* ~40% of prior ~1246px */
+      height: 240px;
     }
     .csms-chart-wrap {
       width: 100%;
       position: relative;
       overflow: hidden;
-      border-radius: 10px;
-      background: rgba(9, 19, 43, 0.45);
+      border-radius: 8px;
+      background: var(--panel);
       border: 1px solid var(--border);
-      padding: 6px;
+      padding: 8px;
     }
     .csms-chart-wrap.daily {
-      height: 180px; /* ~40% smaller visual footprint */
+      height: 170px;
     }
     .csms-chart-wrap.small {
-      height: 150px; /* ~40% smaller visual footprint */
+      height: 155px;
     }
     .csms-chart-grid {
       display: grid;
       grid-template-columns: 1.25fr .75fr;
-      gap: 10px;
-      margin-top: 10px;
+      gap: 8px;
+      margin-top: 8px;
     }
-    .report-scope-csms .section-title { font-size: 24px; }
-    .report-scope-csms .section-subtitle { font-size: 14px; letter-spacing: .05em; }
-    .report-scope-csms .status-pill { font-size: 16px; min-width: 220px; padding: 8px 12px; }
+    .report-scope-csms .section-title { font-size: 36px; font-weight: 800; letter-spacing: 0; }
+    .report-scope-csms .section-subtitle { font-size: 14px; letter-spacing: .01em; text-transform: none; margin-top: 4px; }
+    .report-scope-csms .status-pill { font-size: 11px; min-width: 180px; padding: 8px 10px; border-radius: 8px; }
     .report-scope-csms .kpi-grid { grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 10px; }
-    .report-scope-csms .kpi-grid .kpi-card { min-height: 96px; padding: 10px; }
-    .report-scope-csms .kpi-label { font-size: 14px; }
-    .report-scope-csms .kpi-number { font-size: 22px; margin: 4px 0; }
-    .report-scope-csms .kpi-trend { font-size: 13px; }
-    .report-scope-csms .large-pre { min-height: 165px; font-size: 14px; line-height: 1.4; }
-    .report-scope-csms .health-panel { min-height: 165px; font-size: 16px; }
-    .report-scope-csms .health-panel h3 { font-size: 22px; }
-    .report-scope-csms .elapsed-note { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+    .report-scope-csms .kpi-grid .kpi-card { min-height: 100px; padding: 12px; }
+    .report-scope-csms .kpi-label { font-size: 11px; }
+    .report-scope-csms .kpi-number { font-size: 34px; margin: 2px 0 4px; line-height: 1; }
+    .report-scope-csms .kpi-trend { font-size: 12px; }
+    .report-scope-csms .large-pre { min-height: 178px; font-size: 13px; line-height: 1.35; }
+    .report-scope-csms .health-panel { min-height: 178px; font-size: 12px; }
+    .report-scope-csms .health-panel h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; color: var(--heading-strong); }
+    .report-scope-csms .elapsed-note { font-size: 11px; color: var(--muted); margin: 3px 0 0; }
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
     .tab-btn.active {
       background: linear-gradient(90deg, var(--accent), var(--accent-2));
-      color: #08101f;
+      color: var(--kpi-subtle);
     }
     .kpi-card {
       background: var(--panel-2);
@@ -362,21 +552,20 @@ HTML = """
       min-width: 180px;
       flex: 1;
     }
-    .kpi-number { font-size: 52px; font-weight: 800; margin: 8px 0 6px; color: var(--accent); }
-    .kpi-label { color: var(--muted); font-size: 23px; letter-spacing: .01em; text-transform: uppercase; }
-    .kpi-trend { font-size: 22px; font-weight: 700; }
-    .trend-pos { color: #4fd1c5; }
-    .trend-neg { color: #ff7098; }
+    .kpi-number { font-size: 36px; font-weight: 800; margin: 8px 0 6px; color: var(--kpi-strong); line-height: 1; }
+    .kpi-label { color: var(--muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+    .kpi-trend { font-size: 12px; font-weight: 700; }
+    .trend-pos { color: var(--trend-good); }
+    .trend-neg { color: var(--trend-bad); }
     .section-title {
-      font-size: 34px;
+      font-size: 36px;
       margin: 0;
       letter-spacing: .01em;
     }
     .section-subtitle {
-      font-size: 26px;
-      letter-spacing: .08em;
+      font-size: 14px;
+      letter-spacing: .02em;
       color: var(--muted);
-      text-transform: uppercase;
       margin: 8px 0 0;
     }
     .elapsed-note {
@@ -388,27 +577,27 @@ HTML = """
     .status-pill {
       background: var(--panel-2);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px 16px;
-      font-size: 24px;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 11px;
       color: var(--muted);
-      min-width: 300px;
+      min-width: 170px;
       text-align: right;
     }
     .status-pill strong { color: var(--text); }
     .large-pre {
-      min-height: 220px;
-      font-size: 25px;
-      line-height: 1.45;
+      min-height: 180px;
+      font-size: 13px;
+      line-height: 1.35;
     }
     .health-panel {
-      min-height: 220px;
-      font-size: 24px;
+      min-height: 180px;
+      font-size: 12px;
     }
     .health-panel h3 {
       margin: 0 0 10px;
-      font-size: 30px;
-      color: var(--accent);
+      font-size: 12px;
+      color: var(--heading-strong);
     }
     .progress-wrap {
       width: 100%;
@@ -443,8 +632,11 @@ HTML = """
       .section-title { font-size: 32px; }
       .section-subtitle { font-size: 18px; }
       .csms-chart-grid { grid-template-columns: 1fr; }
-      .app-nav-title { font-size: 28px; }
-      .app-nav-shell { align-items: flex-start; }
+      .app-nav-title { font-size: 12px; }
+      .wrap { padding-left: 16px; }
+      .app-nav { position: static; width: 100%; height: auto; }
+      .app-nav-actions { flex-direction: row; flex-wrap: wrap; justify-content: center; }
+      .team-grid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
     }
   </style>
 </head>
@@ -452,20 +644,15 @@ HTML = """
   <div class="wrap">
     <div class="card app-nav">
       <div class="app-nav-shell">
-        <h1 class="app-nav-title">CSMS Operations</h1>
+        <h1 class="app-nav-title">CSMS<br/>OPERATIONS</h1>
         <div class="app-nav-actions">
-          <button type="button" class="muted-btn report-tab active" data-report="csms">CSMS Report</button>
-          <button type="button" class="muted-btn report-tab" data-report="legacy">General Report</button>
-          <button type="button" class="muted-btn" id="notesInfoBtn" aria-expanded="false" aria-controls="notesTooltip">Notes</button>
-          <button type="button" class="muted-btn theme-toggle" id="themeToggle" aria-label="Toggle theme" title="Switch theme">◐</button>
+          <button type="button" class="muted-btn report-tab active" data-report="csms" title="Executive Summary">Executive</button>
+          <button type="button" class="muted-btn report-tab" data-report="team" title="Team Posture">Team</button>
+          <button type="button" class="muted-btn report-tab" data-report="legacy" title="General Report">Trends</button>
+          <button type="button" class="muted-btn report-tab" data-report="notes" title="Notes & Guides">Notes</button>
           <button type="button" class="muted-btn report-tab auth-icon-btn" data-report="auth" title="Auth diagnostics" aria-label="Auth diagnostics">U</button>
+          <button type="button" class="muted-btn theme-toggle" id="themeToggle" aria-label="Toggle theme" title="Switch theme">◐</button>
         </div>
-      </div>
-      <div id="notesTooltip" class="tooltip-panel" hidden>
-        <strong>Quick Notes</strong><br />
-        Base endpoint: `https://jira.mdthink.maryland.gov/rest/api/2/search`<br />
-        Summary output includes status transition metrics and path columns.<br />
-        Credentials come from env vars: `JIRA_USERNAME/JIRA_PASSWORD` or `JIRA_EMAIL/JIRA_API_TOKEN`.
       </div>
     </div>
 
@@ -473,7 +660,7 @@ HTML = """
       <div class="card">
         <div class="hero-head">
           <div>
-            <h1 class="section-title">CSMS Support Portfolio</h1>
+            <h1 class="section-title">CSMS Operations Portfolio</h1>
             <p id="csmsSubtitle" class="section-subtitle">Executive Incident Summary</p>
             <p id="csmsElapsed" class="elapsed-note">Elapsed time sentence appears after a report run.</p>
           </div>
@@ -504,6 +691,45 @@ HTML = """
           <div class="csms-chart-wrap small">
             <canvas id="statusChart"></canvas>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="teamPostureSection" class="app-section report-scope-team" hidden>
+      <div class="card">
+        <div class="hero-head">
+          <div>
+            <h2>Team Member Ticket Posture</h2>
+            <p class="small">Click a team member to load stand-up and EOD posture metrics.</p>
+          </div>
+        </div>
+        <div id="teamMemberGrid" class="member-grid"></div>
+        <div id="teamMetricsGrid" class="team-grid">
+          <div class="team-metric-card"><div class="label">Resolved (Owned)</div><div id="teamResolvedOwnedCount" class="value">--</div></div>
+          <div class="team-metric-card"><div class="label">Resolved (Contributed)</div><div id="teamResolvedContributedCount" class="value">--</div></div>
+          <div class="team-metric-card"><div class="label">Assigned Open Tickets</div><div id="teamOpenCount" class="value">--</div></div>
+          <div class="team-metric-card"><div class="label">Reopened Tickets</div><div id="teamReopenedCount" class="value">--</div></div>
+          <div class="team-metric-card"><div class="label">Worked On (Assigned to Others)</div><div id="teamWorkedOtherCount" class="value">--</div></div>
+          <div class="team-metric-card"><div class="label">SLA Breach Count</div><div id="teamSlaBreachCount" class="value">--</div></div>
+          <div class="team-metric-card"><div class="label">Open Tickets &lt; 8h to SLA Breach</div><div id="teamSlaNearCount" class="value">--</div></div>
+          <div class="team-metric-card"><div class="label">Oldest Open Ticket</div><div id="teamOldestTicket" class="value">--</div></div>
+          <div class="team-metric-card"><div class="label">Oldest Open Age (days)</div><div id="teamOldestAge" class="value">--</div></div>
+        </div>
+      </div>
+      <div class="two-col" style="margin-top:18px;">
+        <div class="card">
+          <h2>Ticket Count by Status</h2>
+          <pre id="teamStatusSummary">Select a member and refresh.</pre>
+        </div>
+        <div class="card">
+          <h2>Oldest Open Detail</h2>
+          <pre id="teamOldestDetail">Select a member and refresh.</pre>
+        </div>
+      </div>
+      <div class="card" style="margin-top:18px;">
+        <h2>Ticket Labels</h2>
+        <div class="legacy-chart-wrap daily">
+          <canvas id="teamLabelsChart"></canvas>
         </div>
       </div>
     </section>
@@ -602,6 +828,50 @@ HTML = """
           </form>
         </div>
       </div>
+
+      <div id="teamSettingsCard" class="card collapse-card report-scope-team" style="margin-top:18px;" hidden>
+        <button type="button" class="muted-btn collapse-toggle" data-collapse-target="teamSettings" aria-expanded="false" aria-controls="teamSettings">Show Team Posture Variables & Settings</button>
+        <div id="teamSettings" class="collapse-body" hidden>
+          <h2>Team Posture Settings</h2>
+          <form id="teamPostureForm">
+            <div class="field wide"><label>Jira Search Endpoint</label><input name="base_url" value="https://jira.mdthink.maryland.gov/rest/api/2/search" /></div>
+            <div class="field wide"><label>Projects (comma separated)</label><input name="projects" value="CSSD,CSD,CDF" /></div>
+            <div class="field"><label>Start Date/Time</label><input type="datetime-local" name="start_dt" /></div>
+            <div class="field"><label>End Date/Time</label><input type="datetime-local" name="end_dt" /></div>
+            <div class="field"><label>Issue Types</label><input name="issue_types" placeholder="Bug, Task" /></div>
+            <div class="field"><label>CSD Assigned Developer Field Key</label><input name="csd_assigned_dev_field" value="customfield_14700" placeholder="customfield_12345" /></div>
+            <div class="field"><label>Page Size</label><input type="number" name="page_size" value="50" min="1" max="100" /></div>
+            <div class="field"><label>Max Issues (0 = all)</label><input type="number" name="max_issues" value="0" min="0" /></div>
+            <div class="field full">
+              <div class="row">
+                <label class="check"><input type="checkbox" name="verify_ssl" checked /> Verify SSL</label>
+              </div>
+            </div>
+            <div class="field full">
+              <h3 style="margin:0 0 8px;">Team Members</h3>
+              <div class="row">
+                <input id="teamMemberNameInput" placeholder="Display name" />
+                <input id="teamMemberUsernameInput" placeholder="Assignee username" />
+                <button type="button" class="muted-btn" id="teamAddMemberBtn">Add Member</button>
+                <button type="button" class="muted-btn" id="teamRemoveMemberBtn">Remove Selected</button>
+              </div>
+            </div>
+            <div class="field full">
+              <div class="row">
+                <button type="button" class="muted-btn" id="teamRefreshBtn">Refresh All Member Metrics</button>
+                <button type="button" class="muted-btn" id="teamExportCsvBtn">Download CSV</button>
+                <button type="button" class="muted-btn" id="teamExportExcelBtn">Download Excel</button>
+                <button type="button" class="muted-btn" id="teamExportAllBtn">Download Team CSV</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div id="teamCsvPreviewCard" class="card report-scope-team" style="margin-top:18px;" hidden>
+        <h2>CSV Preview</h2>
+        <pre id="teamCsvPreview">Run Team Posture refresh to preview CSV rows.</pre>
+      </div>
     </section>
 
     <section id="dataExportsSection" class="app-section report-scope-legacy" hidden>
@@ -627,6 +897,57 @@ HTML = """
         <pre id="authResult" style="margin-top:12px;">Run auth check to inspect current API identity and visible projects.</pre>
       </div>
     </section>
+
+    <section id="notesSection" class="app-section report-scope-notes" hidden>
+      <div class="card">
+        <div class="hero-head">
+          <div>
+            <h2>Notes & Guides</h2>
+            <p class="small">Reference content for dashboard metrics, charts, and daily usage.</p>
+          </div>
+        </div>
+        <div class="notes-grid">
+          <div class="notes-card">
+            <h3>CSMS Dashboard Explainer</h3>
+            <ul>
+              <li><strong>Backlog Tickets:</strong> Open tickets based on project-specific final status rules.</li>
+              <li><strong>New Created:</strong> Tickets created in the most recent comparison period.</li>
+              <li><strong>Resolved Tickets:</strong> Tickets currently in final/resolved states.</li>
+              <li><strong>Longest Open:</strong> Oldest active ticket with age, issue key, and workflow gap.</li>
+            </ul>
+          </div>
+          <div class="notes-card">
+            <h3>Team Posture Explainer</h3>
+            <ul>
+              <li><strong>Resolved (Owned):</strong> Resolved/final statuses for tickets owned by the member (assignee plus CSD &quot;Assigned Developer&quot; when configured).</li>
+              <li><strong>Resolved (Contributed):</strong> Resolved/final statuses for tickets where the member appears as a status-transition author but is not the current owner.</li>
+              <li><strong>Assigned Open:</strong> Current open workload assigned to selected member.</li>
+              <li><strong>Reopened Tickets:</strong> Includes assigned tickets and worked-on tickets with reopen history.</li>
+              <li><strong>Worked On (Assigned to Others):</strong> Status-change author matches member, but assignee differs.</li>
+              <li><strong>Ticket Count by Status:</strong> Distribution for assigned tickets in current filter window.</li>
+            </ul>
+          </div>
+          <div class="notes-card">
+            <h3>How To Use</h3>
+            <ul>
+              <li>Set date range and project filters in Variables & Settings.</li>
+              <li>Use Team icons to view per-member metrics.</li>
+              <li>Click Refresh All Member Metrics for team-wide refresh.</li>
+              <li>Use Download CSV/Excel for selected member, or Download Team CSV for all members.</li>
+            </ul>
+          </div>
+          <div class="notes-card">
+            <h3>Auth & Data Quality</h3>
+            <ul>
+              <li>Use Auth page to validate credentials and project visibility.</li>
+              <li>If Jira returns 500 with changelog, fallback may reduce reopen/worked-on completeness.</li>
+              <li>Username must match Jira account key/name for team calculations.</li>
+              <li>Base endpoint: `https://jira.mdthink.maryland.gov/rest/api/2/search`</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -647,7 +968,24 @@ const THEME_PARAMS = {
     "--pre-bg": "#eef3ff",
     "--pre-text": "#20345e",
     "--download-bg": "#e6edff",
-    "--download-text": "#1b2d52"
+    "--download-text": "#1b2d52",
+    "--action-btn-bg-start": "#f9fbff",
+    "--action-btn-bg-end": "#edf3fd",
+    "--action-btn-border": "#d3e0f1",
+    "--action-btn-text": "#1a335b",
+    "--side-bg": "#0d1c39",
+    "--side-title": "#dce8ff",
+    "--side-btn-text": "#c9daf7",
+    "--side-btn-active-start": "#3a6fdf",
+    "--side-btn-active-end": "#2a57b8",
+    "--side-btn-active-border": "#3f6bc5",
+    "--heading-strong": "#1c365f",
+    "--kpi-strong": "#0f2343",
+    "--kpi-subtle": "#08101f",
+    "--trend-good": "#148a78",
+    "--trend-bad": "#c23f4f",
+    "--member-icon-start": "#7fd1ff",
+    "--member-icon-end": "#5db9ff"
   },
   dark: {
     "--bg": "#0b1020",
@@ -664,7 +1002,24 @@ const THEME_PARAMS = {
     "--pre-bg": "#0b1228",
     "--pre-text": "#dbe7ff",
     "--download-bg": "#18234a",
-    "--download-text": "#ffffff"
+    "--download-text": "#ffffff",
+    "--action-btn-bg-start": "rgba(255, 255, 255, 0.12)",
+    "--action-btn-bg-end": "rgba(255, 255, 255, 0.04)",
+    "--action-btn-border": "rgba(202, 226, 255, 0.24)",
+    "--action-btn-text": "#c9daf7",
+    "--side-bg": "#081a35",
+    "--side-title": "#dce8ff",
+    "--side-btn-text": "#c9daf7",
+    "--side-btn-active-start": "#6f96ea",
+    "--side-btn-active-end": "#4b72ca",
+    "--side-btn-active-border": "#6c8fd9",
+    "--heading-strong": "#cddcff",
+    "--kpi-strong": "#f1f5ff",
+    "--kpi-subtle": "#dce8ff",
+    "--trend-good": "#4fd1c5",
+    "--trend-bad": "#ff7098",
+    "--member-icon-start": "#8fd7ff",
+    "--member-icon-end": "#73c6ff"
   }
 };
 
@@ -758,12 +1113,220 @@ document.getElementById("exportForm").addEventListener("submit", async (e) => {
 
 let csmsCharts = { daily: null, status: null, top: null };
 let legacyCharts = { status: null, daily: null };
+let teamCharts = { labels: null };
 let latestCsmsPayload = null;
+let teamMembers = [];
+let activeTeamMemberId = null;
+let latestTeamPosturePayload = null;
+let teamPayloadByMemberId = {};
+
+function teamStorageKey() {
+  return "team-posture-members-v1";
+}
+
+function loadTeamMembersFromStorage() {
+  try {
+    const raw = localStorage.getItem(teamStorageKey());
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length) return parsed;
+    }
+  } catch (e) {}
+  return [
+    { id: "m1", name: "Member 1", username: "member1" },
+    { id: "m2", name: "Member 2", username: "member2" },
+  ];
+}
+
+function saveTeamMembersToStorage(members) {
+  localStorage.setItem(teamStorageKey(), JSON.stringify(members));
+}
+
+function initialsFor(name) {
+  const parts = String(name || "").trim().split(/\\s+/).filter(Boolean);
+  if (!parts.length) return "U";
+  return parts.slice(0, 2).map((p) => p[0].toUpperCase()).join("");
+}
+
+function renderTeamMemberIcons() {
+  const grid = document.getElementById("teamMemberGrid");
+  if (!grid) return;
+  grid.innerHTML = teamMembers.map((member) => `
+    <button type="button" class="member-pill ${member.id === activeTeamMemberId ? "active" : ""}" data-member-id="${member.id}">
+      <span class="member-icon">${initialsFor(member.name)}</span>
+      <span>${member.name}</span>
+    </button>
+  `).join("");
+  grid.querySelectorAll(".member-pill").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      activeTeamMemberId = btn.getAttribute("data-member-id");
+      renderTeamMemberIcons();
+      const cached = teamPayloadByMemberId[activeTeamMemberId];
+      if (cached) {
+        latestTeamPosturePayload = cached;
+        renderTeamPostureMetrics(cached);
+      } else {
+        refreshTeamPosture();
+      }
+    });
+  });
+}
+
+function activeTeamMember() {
+  return teamMembers.find((m) => m.id === activeTeamMemberId) || null;
+}
+
+function teamFormToObject() {
+  const form = document.getElementById("teamPostureForm");
+  const obj = {};
+  const fd = new FormData(form);
+  for (const [key, value] of fd.entries()) obj[key] = value;
+  obj.verify_ssl = form.verify_ssl.checked;
+  const member = activeTeamMember();
+  obj.assignee_username = member ? member.username : "";
+  obj.member_name = member ? member.name : "";
+  return obj;
+}
+
+function renderTeamPostureMetrics(payload) {
+  const metrics = payload.metrics || {};
+  const oldest = payload.oldest_open || {};
+  const resolvedOwned = metrics.resolved_owned_count ?? metrics.resolved_count ?? 0;
+  document.getElementById("teamResolvedOwnedCount").textContent = String(resolvedOwned);
+  document.getElementById("teamResolvedContributedCount").textContent = String(metrics.resolved_contributed_count ?? 0);
+  document.getElementById("teamOpenCount").textContent = String(metrics.assigned_open_count ?? 0);
+  document.getElementById("teamReopenedCount").textContent = String(metrics.reopened_count ?? 0);
+  document.getElementById("teamWorkedOtherCount").textContent = String(metrics.worked_on_assigned_others_count ?? 0);
+  document.getElementById("teamSlaBreachCount").textContent = String(metrics.sla_breach_count ?? 0);
+  document.getElementById("teamSlaNearCount").textContent = String(metrics.open_near_sla_breach_8h_count ?? 0);
+  document.getElementById("teamOldestTicket").textContent = oldest.issue_key || "N/A";
+  document.getElementById("teamOldestAge").textContent = String(oldest.age_days ?? "--");
+
+  const status = payload.status_distribution || {};
+  const statusLines = Object.entries(status)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .map(([k, v]) => `${k}: ${v}`);
+  document.getElementById("teamStatusSummary").textContent = statusLines.join("\\n") || "No status counts.";
+  document.getElementById("teamOldestDetail").textContent = JSON.stringify(oldest || {}, null, 2);
+  renderTeamLabelsChart(payload.label_distribution || {});
+  renderTeamCsvPreview(payload.raw_rows || []);
+}
+
+function renderTeamLabelsChart(labelDistribution) {
+  const el = document.getElementById("teamLabelsChart");
+  if (!el) return;
+  const entries = Object.entries(labelDistribution || {}).sort((a, b) => Number(b[1]) - Number(a[1]));
+  const ctx = el.getContext("2d");
+  destroyChart(teamCharts.labels);
+  teamCharts.labels = new Chart(ctx, {
+    type: "pie",
+    data: {
+      labels: entries.map(([k]) => k),
+      datasets: [{ data: entries.map(([, v]) => v) }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: "right" },
+      },
+    },
+  });
+}
+
+function toCsv(rows, headers) {
+  const esc = (val) => {
+    const s = String(val ?? "");
+    if (s.includes(",") || s.includes("\\\"") || s.includes("\\n")) {
+      return `"${s.replace(/"/g, "\\\"\\\"")}"`;
+    }
+    return s;
+  };
+  const allHeaders = headers && headers.length ? headers : (rows[0] ? Object.keys(rows[0]) : []);
+  const lines = [allHeaders.join(",")];
+  for (const row of rows) {
+    lines.push(allHeaders.map((h) => esc(row[h])).join(","));
+  }
+  return lines.join("\\n");
+}
+
+function renderTeamCsvPreview(rawRows) {
+  const previewRows = (rawRows || []).slice(0, 8);
+  if (!previewRows.length) {
+    document.getElementById("teamCsvPreview").textContent = "No rows available for preview.";
+    return;
+  }
+  const headers = Object.keys(previewRows[0]);
+  document.getElementById("teamCsvPreview").textContent = toCsv(previewRows, headers);
+}
+
+async function refreshTeamPosture() {
+  const member = activeTeamMember();
+  if (!member) {
+    document.getElementById("teamStatusSummary").textContent = "Add and select a member first.";
+    document.getElementById("teamCsvPreview").textContent = "Add and select a member first.";
+    return;
+  }
+  const payload = teamFormToObject();
+  const res = await fetch("/run-team-posture", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    document.getElementById("teamStatusSummary").textContent = JSON.stringify(data, null, 2);
+    document.getElementById("teamCsvPreview").textContent = JSON.stringify(data, null, 2);
+    return;
+  }
+  latestTeamPosturePayload = data;
+  if (member && member.id) {
+    teamPayloadByMemberId[member.id] = data;
+  }
+  renderTeamPostureMetrics(data);
+}
+
+async function refreshAllTeamMembers() {
+  if (!teamMembers.length) {
+    document.getElementById("teamStatusSummary").textContent = "Add and select a member first.";
+    document.getElementById("teamCsvPreview").textContent = "Add and select a member first.";
+    return;
+  }
+  const base = teamFormToObject();
+  let successCount = 0;
+  for (const member of teamMembers) {
+    const payload = { ...base, assignee_username: member.username, member_name: member.name };
+    const res = await fetch("/run-team-posture", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      continue;
+    }
+    teamPayloadByMemberId[member.id] = data;
+    successCount += 1;
+  }
+  if (!activeTeamMemberId && teamMembers[0]) {
+    activeTeamMemberId = teamMembers[0].id;
+  }
+  const activePayload = teamPayloadByMemberId[activeTeamMemberId];
+  if (activePayload) {
+    latestTeamPosturePayload = activePayload;
+    renderTeamPostureMetrics(activePayload);
+  }
+  if (!activePayload) {
+    document.getElementById("teamStatusSummary").textContent = `No member data loaded (${successCount}/${teamMembers.length} successful).`;
+  }
+}
 
 function setActiveReport(report) {
   document.querySelectorAll(".report-scope-csms").forEach((el) => { el.hidden = report !== "csms"; });
+  document.querySelectorAll(".report-scope-team").forEach((el) => { el.hidden = report !== "team"; });
   document.querySelectorAll(".report-scope-legacy").forEach((el) => { el.hidden = report !== "legacy"; });
   document.querySelectorAll(".report-scope-auth").forEach((el) => { el.hidden = report !== "auth"; });
+  document.querySelectorAll(".report-scope-notes").forEach((el) => { el.hidden = report !== "notes"; });
   document.querySelectorAll(".report-tab").forEach((btn) => {
     btn.classList.toggle("active", btn.getAttribute("data-report") === report);
   });
@@ -772,26 +1335,6 @@ function setActiveReport(report) {
 
 document.querySelectorAll(".report-tab").forEach((btn) => {
   btn.addEventListener("click", () => setActiveReport(btn.getAttribute("data-report")));
-});
-
-const notesInfoBtn = document.getElementById("notesInfoBtn");
-const notesTooltip = document.getElementById("notesTooltip");
-notesInfoBtn.addEventListener("click", () => {
-  const expanded = notesInfoBtn.getAttribute("aria-expanded") === "true";
-  notesInfoBtn.setAttribute("aria-expanded", expanded ? "false" : "true");
-  notesTooltip.hidden = expanded;
-});
-document.addEventListener("click", (evt) => {
-  if (!notesTooltip.hidden && !notesTooltip.contains(evt.target) && evt.target !== notesInfoBtn) {
-    notesTooltip.hidden = true;
-    notesInfoBtn.setAttribute("aria-expanded", "false");
-  }
-});
-document.addEventListener("keydown", (evt) => {
-  if (evt.key === "Escape") {
-    notesTooltip.hidden = true;
-    notesInfoBtn.setAttribute("aria-expanded", "false");
-  }
 });
 
 function csmsFormToObject(form) {
@@ -1043,6 +1586,66 @@ document.getElementById("legacyRefreshBtn").addEventListener("click", async () =
   await refreshLegacyDashboard(payload);
 });
 
+document.getElementById("teamRefreshBtn").addEventListener("click", async () => {
+  await refreshAllTeamMembers();
+});
+
+document.getElementById("teamAddMemberBtn").addEventListener("click", () => {
+  const nameInput = document.getElementById("teamMemberNameInput");
+  const usernameInput = document.getElementById("teamMemberUsernameInput");
+  const name = (nameInput.value || "").trim();
+  const username = (usernameInput.value || "").trim();
+  if (!name || !username) return;
+  const member = { id: `m_${Date.now()}`, name, username };
+  teamMembers.push(member);
+  activeTeamMemberId = member.id;
+  saveTeamMembersToStorage(teamMembers);
+  teamPayloadByMemberId = {};
+  nameInput.value = "";
+  usernameInput.value = "";
+  renderTeamMemberIcons();
+});
+
+document.getElementById("teamRemoveMemberBtn").addEventListener("click", () => {
+  if (!activeTeamMemberId) return;
+  teamMembers = teamMembers.filter((m) => m.id !== activeTeamMemberId);
+  if (teamMembers.length) {
+    activeTeamMemberId = teamMembers[0].id;
+  } else {
+    activeTeamMemberId = null;
+  }
+  saveTeamMembersToStorage(teamMembers);
+  teamPayloadByMemberId = {};
+  renderTeamMemberIcons();
+});
+
+function openTeamExport(kind) {
+  if (!latestTeamPosturePayload || !latestTeamPosturePayload.exports) return;
+  const url = latestTeamPosturePayload.exports[kind];
+  if (url) window.open(url, "_blank");
+}
+
+document.getElementById("teamExportCsvBtn").addEventListener("click", () => openTeamExport("csv"));
+document.getElementById("teamExportExcelBtn").addEventListener("click", () => openTeamExport("excel"));
+document.getElementById("teamExportAllBtn").addEventListener("click", async () => {
+  const payload = teamFormToObject();
+  payload.team_members = teamMembers;
+  payload.include_all_members = true;
+  const res = await fetch("/run-team-posture-board-export", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    document.getElementById("teamStatusSummary").textContent = JSON.stringify(data, null, 2);
+    return;
+  }
+  if (data.exports && data.exports.csv) {
+    window.open(data.exports.csv, "_blank");
+  }
+});
+
 document.getElementById("authCheckBtn").addEventListener("click", async () => {
   const base = document.querySelector('#csmsForm input[name="base_url"]')?.value
     || document.querySelector('#exportForm input[name="base_url"]')?.value
@@ -1057,6 +1660,10 @@ document.getElementById("authCheckBtn").addEventListener("click", async () => {
   const data = await res.json();
   document.getElementById("authResult").textContent = JSON.stringify(data, null, 2);
 });
+
+teamMembers = loadTeamMembersFromStorage();
+activeTeamMemberId = teamMembers[0] ? teamMembers[0].id : null;
+renderTeamMemberIcons();
 
 renderCsmsKpis({
   backlog: { period2: "--", trend: 0 },
@@ -1988,6 +2595,544 @@ def build_legacy_dashboard_payload(params: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def build_team_posture_jql(params: Dict[str, Any], assignee_username: str, include_assignee: bool = True) -> str:
+    projects = parse_csv_list(params.get("projects"))
+    issue_types = parse_csv_list(params.get("issue_types"))
+    clauses: List[str] = []
+    for clause in [
+        list_clause("project", projects),
+        list_clause("issuetype", issue_types),
+        list_clause("assignee", [assignee_username] if include_assignee and assignee_username else []),
+    ]:
+        if clause:
+            clauses.append(clause)
+    start_dt = normalize_dt_local(params.get("start_dt"))
+    end_dt = normalize_dt_local(params.get("end_dt"))
+    if start_dt:
+        clauses.append(f'created >= "{start_dt}"')
+    if end_dt:
+        clauses.append(f'created <= "{end_dt}"')
+    return (" AND ".join(clauses) if clauses else "order by created desc") + " ORDER BY created DESC"
+
+
+def count_reopened_issues(issues: List[Dict[str, Any]], project_rules: Dict[str, str]) -> int:
+    reopened = 0
+    reopen_targets = {
+        "open", "in progress", "new", "selected for development", "under qa analysis",
+    }
+    for issue in issues:
+        project_key = get_issue_project_key(issue)
+        final_status = get_project_final_status(project_key, project_rules).lower()
+        histories = ((issue.get("changelog") or {}).get("histories") or [])
+        was_reopened = False
+        for history in histories:
+            for item in history.get("items", []):
+                if (item.get("field") or "").lower() != "status":
+                    continue
+                from_status = (item.get("fromString") or "").strip().lower()
+                to_status = (item.get("toString") or "").strip().lower()
+                if from_status == final_status and (to_status in reopen_targets or to_status != final_status):
+                    was_reopened = True
+                    break
+            if was_reopened:
+                break
+        if was_reopened:
+            reopened += 1
+    return reopened
+
+
+def count_by_status_keywords(status_distribution: Dict[str, int], keywords: List[str]) -> int:
+    total = 0
+    wanted = [k.lower() for k in keywords]
+    for status_name, count in status_distribution.items():
+        lowered = (status_name or "").lower()
+        if any(keyword in lowered for keyword in wanted):
+            total += int(count or 0)
+    return total
+
+
+def issue_status_matches_keywords(issue: Dict[str, Any], keywords: Iterable[str]) -> bool:
+    status = (get_issue_status(issue) or "").strip().lower()
+    if not status:
+        return False
+    wanted = [k.lower() for k in keywords]
+    return any(k in status for k in wanted)
+
+
+def count_resolved_contributed_for_member(
+    issues: List[Dict[str, Any]],
+    assignee_username: str,
+    csd_assigned_dev_field: str,
+    keywords: Tuple[str, ...] = TEAM_POSTURE_RESOLVED_STATUS_KEYWORDS,
+) -> int:
+    """Resolved-like tickets worked (status changelog) by member who is not the current owner."""
+    target = (assignee_username or "").strip().lower()
+    if not target:
+        return 0
+    count = 0
+    for issue in issues:
+        if issue_owner_username(issue, csd_assigned_dev_field) == target:
+            continue
+        if not member_has_status_change(issue, target):
+            continue
+        if issue_status_matches_keywords(issue, keywords):
+            count += 1
+    return count
+
+
+def group_by_labels(issues: List[Dict[str, Any]]) -> Dict[str, int]:
+    counts: Counter = Counter()
+    for issue in issues:
+        fields = issue.get("fields") or {}
+        labels = fields.get("labels") or []
+        if not labels:
+            counts["No Label"] += 1
+            continue
+        for label in labels:
+            val = (str(label) if label is not None else "").strip()
+            counts[val or "No Label"] += 1
+    return dict(counts)
+
+
+def issue_current_assignee_username(issue: Dict[str, Any]) -> str:
+    fields = issue.get("fields", {}) or {}
+    assignee = fields.get("assignee") or {}
+    return (assignee.get("name") or assignee.get("key") or assignee.get("emailAddress") or "").strip().lower()
+
+
+def issue_assignee_matches(issue: Dict[str, Any], username: str) -> bool:
+    fields = issue.get("fields", {}) or {}
+    assignee = fields.get("assignee") or {}
+    if isinstance(assignee, dict):
+        return user_matches_username(assignee, username)
+    if isinstance(assignee, str):
+        return assignee.strip().lower() == (username or "").strip().lower()
+    return False
+
+
+def user_matches_username(user_obj: Dict[str, Any], username: str) -> bool:
+    target = (username or "").strip().lower()
+    if not target:
+        return False
+    candidates = [
+        user_obj.get("name"),
+        user_obj.get("key"),
+        user_obj.get("emailAddress"),
+        user_obj.get("displayName"),
+        user_obj.get("accountId"),
+        user_obj.get("value"),
+    ]
+    for item in candidates:
+        if (item or "").strip().lower() == target:
+            return True
+    return False
+
+
+def issue_owner_username(issue: Dict[str, Any], csd_assigned_dev_field: str) -> str:
+    project_key = get_issue_project_key(issue)
+    fields = issue.get("fields", {}) or {}
+    if project_key == "CSD" and csd_assigned_dev_field:
+        assigned_dev = fields.get(csd_assigned_dev_field)
+        if isinstance(assigned_dev, dict):
+            owner = (
+                assigned_dev.get("name")
+                or assigned_dev.get("key")
+                or assigned_dev.get("emailAddress")
+                or assigned_dev.get("accountId")
+                or assigned_dev.get("value")
+                or assigned_dev.get("displayName")
+                or ""
+            ).strip().lower()
+            if owner:
+                return owner
+        if isinstance(assigned_dev, str):
+            owner = assigned_dev.strip().lower()
+            if owner:
+                return owner
+        if isinstance(assigned_dev, list):
+            for item in assigned_dev:
+                if isinstance(item, dict):
+                    owner = (
+                        item.get("name")
+                        or item.get("key")
+                        or item.get("emailAddress")
+                        or item.get("accountId")
+                        or item.get("value")
+                        or item.get("displayName")
+                        or ""
+                    ).strip().lower()
+                else:
+                    owner = (str(item) if item is not None else "").strip().lower()
+                if owner:
+                    return owner
+    return issue_current_assignee_username(issue)
+
+
+def member_has_status_change(issue: Dict[str, Any], assignee_username: str) -> bool:
+    target = (assignee_username or "").strip().lower()
+    if not target:
+        return False
+    histories = ((issue.get("changelog") or {}).get("histories") or [])
+    for history in histories:
+        author = history.get("author") or {}
+        if not user_matches_username(author, target):
+            continue
+        for item in history.get("items", []):
+            if (item.get("field") or "").lower() == "status":
+                return True
+    return False
+
+
+def issues_owned_by_member(issues: List[Dict[str, Any]], assignee_username: str, csd_assigned_dev_field: str) -> List[Dict[str, Any]]:
+    target = (assignee_username or "").strip().lower()
+    if not target:
+        return []
+    owned: List[Dict[str, Any]] = []
+    for issue in issues:
+        # Keep prior behavior: assignee match always counts as owned.
+        if issue_assignee_matches(issue, target):
+            owned.append(issue)
+            continue
+        # Add CSD Assigned Developer match as additional ownership path.
+        project_key = get_issue_project_key(issue)
+        if project_key == "CSD" and csd_assigned_dev_field:
+            fields = issue.get("fields", {}) or {}
+            assigned_dev = fields.get(csd_assigned_dev_field)
+            if isinstance(assigned_dev, dict) and user_matches_username(assigned_dev, target):
+                owned.append(issue)
+                continue
+            if isinstance(assigned_dev, str) and assigned_dev.strip().lower() == target:
+                owned.append(issue)
+                continue
+            if isinstance(assigned_dev, list):
+                matched = False
+                for item in assigned_dev:
+                    if isinstance(item, dict) and user_matches_username(item, target):
+                        matched = True
+                        break
+                    if not isinstance(item, dict) and (str(item) if item is not None else "").strip().lower() == target:
+                        matched = True
+                        break
+                if matched:
+                    owned.append(issue)
+    return owned
+
+
+def issues_in_member_scope(issues: List[Dict[str, Any]], assignee_username: str, csd_assigned_dev_field: str) -> List[Dict[str, Any]]:
+    target = (assignee_username or "").strip().lower()
+    if not target:
+        return []
+    scoped: List[Dict[str, Any]] = []
+    for issue in issues:
+        owned = issue_owner_username(issue, csd_assigned_dev_field) == target
+        worked_on = member_has_status_change(issue, target)
+        if owned or worked_on:
+            scoped.append(issue)
+    return scoped
+
+
+def get_issue_due_datetime(issue: Dict[str, Any], due_field_key: str = "duedate") -> Optional[datetime]:
+    fields = issue.get("fields", {}) or {}
+    raw = fields.get(due_field_key)
+    if not raw:
+        return None
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        parsed = parse_jira_datetime(text)
+        if parsed:
+            return parsed
+        try:
+            # Jira duedate may be date-only (YYYY-MM-DD).
+            d = datetime.strptime(text, "%Y-%m-%d")
+            return d.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def get_issue_created_datetime(issue: Dict[str, Any]) -> Optional[datetime]:
+    fields = issue.get("fields", {}) or {}
+    return parse_jira_datetime(fields.get("created") or "")
+
+
+def get_issue_finalized_datetime(issue: Dict[str, Any]) -> Optional[datetime]:
+    fields = issue.get("fields", {}) or {}
+    finalized = parse_jira_datetime(fields.get("resolutiondate") or "")
+    if finalized:
+        return finalized
+    # Fallback for tickets in final status that may not have resolutiondate populated.
+    return parse_jira_datetime(fields.get("updated") or "")
+
+
+def _coerce_boolish(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "yes", "y", "1", "breached"}:
+            return True
+        if lowered in {"false", "no", "n", "0", "not breached"}:
+            return False
+    return None
+
+
+def find_resolution_sla_field_key(base_url: str, verify_ssl: bool) -> Optional[str]:
+    jira_root = get_jira_root_url(base_url)
+    if not jira_root:
+        return None
+    if jira_root in RESOLUTION_SLA_FIELD_CACHE:
+        return RESOLUTION_SLA_FIELD_CACHE[jira_root]
+    auth = get_auth()
+    session = requests.Session()
+    resp = session.get(f"{jira_root}/rest/api/2/field", auth=auth, verify=verify_ssl, timeout=30)
+    resp.raise_for_status()
+    fields = resp.json() or []
+    for item in fields:
+        name = (item.get("name") or "").strip().lower()
+        if "resolution sla breached" in name:
+            key = (item.get("id") or "").strip()
+            if key:
+                RESOLUTION_SLA_FIELD_CACHE[jira_root] = key
+                return key
+    RESOLUTION_SLA_FIELD_CACHE[jira_root] = ""
+    return None
+
+
+def issue_resolution_sla_breached(issue: Dict[str, Any], resolution_sla_field_key: Optional[str]) -> Optional[bool]:
+    if not resolution_sla_field_key:
+        return None
+    fields = issue.get("fields", {}) or {}
+    raw = fields.get(resolution_sla_field_key)
+    if isinstance(raw, dict):
+        for key in ("value", "name"):
+            parsed = _coerce_boolish(raw.get(key))
+            if parsed is not None:
+                return parsed
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict):
+                parsed = _coerce_boolish(item.get("value") or item.get("name"))
+            else:
+                parsed = _coerce_boolish(item)
+            if parsed is not None:
+                return parsed
+        return None
+    return _coerce_boolish(raw)
+
+
+def get_open_issues(issues: List[Dict[str, Any]], project_rules: Dict[str, str]) -> List[Dict[str, Any]]:
+    open_issues: List[Dict[str, Any]] = []
+    for issue in issues:
+        status = (get_issue_status(issue) or "").strip().lower()
+        project_key = get_issue_project_key(issue)
+        final_status = get_project_final_status(project_key, project_rules).strip().lower()
+        if status != final_status:
+            open_issues.append(issue)
+    return open_issues
+
+
+def compute_sla_metrics(
+    issues: List[Dict[str, Any]],
+    project_rules: Dict[str, str],
+    base_url: str,
+    verify_ssl: bool,
+    sla_hours: float = 24.0,
+) -> Dict[str, int]:
+    now = datetime.now(timezone.utc)
+    breached = 0
+    near_breach = 0
+    resolution_sla_field_key: Optional[str] = None
+    try:
+        resolution_sla_field_key = find_resolution_sla_field_key(base_url, verify_ssl)
+    except Exception:
+        resolution_sla_field_key = None
+
+    for issue in issues:
+        created_dt = get_issue_created_datetime(issue)
+        if not created_dt:
+            continue
+        project_key = get_issue_project_key(issue)
+        final_status = get_project_final_status(project_key, project_rules).strip().lower()
+        current_status = (get_issue_status(issue) or "").strip().lower()
+        is_open = current_status != final_status
+        if is_open:
+            elapsed_hours = (now - created_dt).total_seconds() / 3600.0
+            remaining_hours = sla_hours - elapsed_hours
+            if remaining_hours < 0:
+                breached += 1
+            elif remaining_hours < 8:
+                near_breach += 1
+            continue
+
+        # Closed/finalized tickets: use Resolution SLA Breached indicator first.
+        flagged = issue_resolution_sla_breached(issue, resolution_sla_field_key)
+        if flagged is True:
+            breached += 1
+            continue
+        if flagged is False:
+            continue
+
+        # Fallback: compute breach from created -> finalized timestamp.
+        finalized_dt = get_issue_finalized_datetime(issue)
+        if not finalized_dt:
+            continue
+        elapsed_to_final_hours = (finalized_dt - created_dt).total_seconds() / 3600.0
+        if elapsed_to_final_hours > sla_hours:
+            breached += 1
+    return {
+        "sla_breach_count": breached,
+        "open_near_sla_breach_8h_count": near_breach,
+    }
+
+
+def count_worked_on_assigned_to_others(issues: List[Dict[str, Any]], assignee_username: str, csd_assigned_dev_field: str) -> int:
+    target = (assignee_username or "").strip().lower()
+    if not target:
+        return 0
+    count = 0
+    for issue in issues:
+        current_assignee = issue_owner_username(issue, csd_assigned_dev_field)
+        if current_assignee == target:
+            continue
+        if member_has_status_change(issue, target):
+            count += 1
+    return count
+
+
+def count_reopened_for_member(issues: List[Dict[str, Any]], assignee_username: str, project_rules: Dict[str, str], csd_assigned_dev_field: str) -> int:
+    target = (assignee_username or "").strip().lower()
+    if not target:
+        return 0
+    reopened_status_keywords = ("reopened", "re-opened", "re opened")
+    reopened = 0
+    for issue in issues:
+        current_owner = issue_owner_username(issue, csd_assigned_dev_field)
+        current_status = (get_issue_status(issue) or "").strip().lower()
+        if not any(k in current_status for k in reopened_status_keywords):
+            continue
+        # Include reopened tickets currently owned by member.
+        if current_owner == target:
+            reopened += 1
+            continue
+        # Include reopened tickets not owned by member but worked by member
+        # through at least one status change history entry.
+        if member_has_status_change(issue, target):
+            reopened += 1
+    return reopened
+
+
+def build_team_posture_payload(params: Dict[str, Any]) -> Dict[str, Any]:
+    base_url = (params.get("base_url") or "").strip()
+    if not base_url:
+        raise ValueError("base_url is required")
+    assignee_username = (params.get("assignee_username") or "").strip()
+    if not assignee_username:
+        raise ValueError("assignee_username is required")
+    member_name = (params.get("member_name") or assignee_username).strip()
+
+    page_size = int(params.get("page_size") or 50)
+    max_issues = int(params.get("max_issues") or 0)
+    verify_ssl = bool(params.get("verify_ssl", True))
+    csd_assigned_dev_field = (params.get("csd_assigned_dev_field") or "").strip()
+    project_rules = {"CSSD": "Closed", "CSD": "Ready For Production Users"}
+    jql = build_team_posture_jql(params, assignee_username, include_assignee=True)
+    broad_jql = build_team_posture_jql(params, assignee_username, include_assignee=False)
+    warnings: List[str] = []
+
+    try:
+        issues = fetch_jira_issues(base_url, jql, page_size, max_issues, verify_ssl, include_changelog=True)
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        if status_code == 500:
+            issues = fetch_jira_issues(base_url, jql, page_size, max_issues, verify_ssl, include_changelog=False)
+            warnings.append("Jira returned 500 with changelog expansion; reopened count may be incomplete.")
+        else:
+            raise
+
+    try:
+        broad_issues = fetch_jira_issues(base_url, broad_jql, page_size, max_issues, verify_ssl, include_changelog=True)
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        if status_code == 500:
+            broad_issues = fetch_jira_issues(base_url, broad_jql, page_size, max_issues, verify_ssl, include_changelog=False)
+            warnings.append("Jira returned 500 on broad team query with changelog expansion; worked-on/reopened may be incomplete.")
+        else:
+            raise
+
+    owned_issues = issues_owned_by_member(broad_issues, assignee_username, csd_assigned_dev_field)
+    member_scope_issues = issues_in_member_scope(broad_issues, assignee_username, csd_assigned_dev_field)
+    sla_metrics = compute_sla_metrics(member_scope_issues, project_rules, base_url, verify_ssl, 24.0)
+    status_distribution = group_by_status(owned_issues)
+    label_distribution = group_by_labels(member_scope_issues)
+    # Resolved/Open remain aligned to owner-matched assigned-ticket status distribution.
+    resolved_owned_count = count_by_status_keywords(
+        status_distribution,
+        list(TEAM_POSTURE_RESOLVED_STATUS_KEYWORDS),
+    )
+    resolved_contributed_count = count_resolved_contributed_for_member(
+        broad_issues, assignee_username, csd_assigned_dev_field, TEAM_POSTURE_RESOLVED_STATUS_KEYWORDS
+    )
+    open_count = get_backlog_count(owned_issues, project_rules)
+    oldest_open = get_oldest_open_ticket(owned_issues, project_rules)
+    reopened_count = count_reopened_for_member(broad_issues, assignee_username, project_rules, csd_assigned_dev_field)
+    worked_on_assigned_others_count = count_worked_on_assigned_to_others(broad_issues, assignee_username, csd_assigned_dev_field)
+    raw_rows = [issue_to_raw_row(issue) for issue in owned_issues]
+
+    return {
+        "member": {"name": member_name, "assignee_username": assignee_username},
+        "jql": jql,
+        "broad_jql": broad_jql,
+        "warnings": warnings,
+        "metrics": {
+            # Back-compat: historically "resolved_count" counted owned resolved tickets only.
+            "resolved_count": resolved_owned_count,
+            "resolved_owned_count": resolved_owned_count,
+            "resolved_contributed_count": resolved_contributed_count,
+            "assigned_open_count": open_count,
+            "reopened_count": reopened_count,
+            "worked_on_assigned_others_count": worked_on_assigned_others_count,
+            "sla_breach_count": sla_metrics["sla_breach_count"],
+            "open_near_sla_breach_8h_count": sla_metrics["open_near_sla_breach_8h_count"],
+        },
+        "status_distribution": status_distribution,
+        "label_distribution": label_distribution,
+        "oldest_open": oldest_open,
+        "raw_rows": raw_rows,
+    }
+
+
+def build_team_board_export_rows(params: Dict[str, Any], members: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for member in members:
+        username = (member.get("username") or "").strip()
+        if not username:
+            continue
+        member_params = dict(params)
+        member_params["assignee_username"] = username
+        member_params["member_name"] = (member.get("name") or username).strip()
+        payload = build_team_posture_payload(member_params)
+        metrics = payload.get("metrics") or {}
+        oldest = payload.get("oldest_open") or {}
+        rows.append(
+            {
+                "Member Name": payload["member"]["name"],
+                "Assignee Username": payload["member"]["assignee_username"],
+                "Resolved (Owned)": metrics.get("resolved_owned_count", metrics.get("resolved_count", 0)),
+                "Resolved (Contributed)": metrics.get("resolved_contributed_count", 0),
+                "Assigned Open Tickets": metrics.get("assigned_open_count", 0),
+                "Reopened Tickets": metrics.get("reopened_count", 0),
+                "Worked On (Assigned to Others)": metrics.get("worked_on_assigned_others_count", 0),
+                "SLA Breach Count": metrics.get("sla_breach_count", 0),
+                "Open Tickets < 8h to SLA Breach": metrics.get("open_near_sla_breach_8h_count", 0),
+                "Oldest Open Ticket": oldest.get("issue_key", ""),
+                "Oldest Open Age Days": oldest.get("age_days", ""),
+            }
+        )
+    return rows
+
+
 def get_jira_root_url(search_url: str) -> str:
     url = (search_url or "").strip()
     if not url:
@@ -2151,6 +3296,91 @@ def run_legacy_dashboard():
         return jsonify({"error": str(exc)}), 400
 
 
+@app.route("/run-team-posture", methods=["POST"])
+def run_team_posture():
+    try:
+        params = request.get_json(force=True)
+        payload = build_team_posture_payload(params)
+        out_dir = Path(tempfile.mkdtemp(prefix="team_posture_"))
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_member = re.sub(r"[^A-Za-z0-9_-]+", "_", payload["member"]["name"])[:40] or "member"
+        csv_path = out_dir / f"team_posture_{safe_member}_{stamp}.csv"
+        summary_csv = out_dir / f"team_posture_summary_{safe_member}_{stamp}.csv"
+        excel_path = out_dir / f"team_posture_{safe_member}_{stamp}.xlsx"
+
+        raw_rows = payload["raw_rows"]
+        write_csv(csv_path, raw_rows, list(raw_rows[0].keys()) if raw_rows else ["Issue Key"])
+        mets = payload.get("metrics") or {}
+        summary_rows = [
+            {"Metric": "Resolved (Owned)", "Value": mets.get("resolved_owned_count", mets.get("resolved_count", 0))},
+            {"Metric": "Resolved (Contributed)", "Value": mets.get("resolved_contributed_count", 0)},
+            {"Metric": "Assigned Open Tickets", "Value": payload["metrics"]["assigned_open_count"]},
+            {"Metric": "Reopened Tickets", "Value": payload["metrics"]["reopened_count"]},
+            {"Metric": "Worked On (Assigned to Others)", "Value": payload["metrics"]["worked_on_assigned_others_count"]},
+            {"Metric": "SLA Breach Count", "Value": payload["metrics"]["sla_breach_count"]},
+            {"Metric": "Open Tickets < 8h to SLA Breach", "Value": payload["metrics"]["open_near_sla_breach_8h_count"]},
+            {"Metric": "Oldest Open Ticket", "Value": payload["oldest_open"].get("issue_key", "")},
+            {"Metric": "Oldest Open Age Days", "Value": payload["oldest_open"].get("age_days", "")},
+        ]
+        write_csv(summary_csv, summary_rows, ["Metric", "Value"])
+        write_excel(
+            excel_path,
+            {
+                "Raw Tickets": raw_rows,
+                "Summary": summary_rows,
+            },
+        )
+        export_id = uuid.uuid4().hex
+        TEAM_EXPORT_CACHE[export_id] = {
+            "csv": str(csv_path),
+            "excel": str(excel_path),
+        }
+        payload["exports"] = {
+            "csv": f"/download-team-posture-export?export_id={export_id}&kind=csv",
+            "excel": f"/download-team-posture-export?export_id={export_id}&kind=excel",
+        }
+        return jsonify(payload)
+    except requests.HTTPError as exc:
+        details = exc.response.text if exc.response is not None else str(exc)
+        return jsonify({"error": f"HTTP error: {exc}", "details": details}), 400
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/run-team-posture-board-export", methods=["POST"])
+def run_team_posture_board_export():
+    try:
+        params = request.get_json(force=True)
+        members = params.get("team_members") or []
+        if not isinstance(members, list) or not members:
+            return jsonify({"error": "team_members is required"}), 400
+        out_dir = Path(tempfile.mkdtemp(prefix="team_posture_board_"))
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        csv_path = out_dir / f"team_posture_board_{stamp}.csv"
+        rows = build_team_board_export_rows(params, members)
+        if not rows:
+            return jsonify({"error": "No valid team members provided"}), 400
+        headers = list(rows[0].keys())
+        write_csv(csv_path, rows, headers)
+        export_id = uuid.uuid4().hex
+        TEAM_EXPORT_CACHE[export_id] = {
+            "csv": str(csv_path),
+        }
+        return jsonify(
+            {
+                "rows": rows,
+                "exports": {
+                    "csv": f"/download-team-posture-export?export_id={export_id}&kind=csv",
+                },
+            }
+        )
+    except requests.HTTPError as exc:
+        details = exc.response.text if exc.response is not None else str(exc)
+        return jsonify({"error": f"HTTP error: {exc}", "details": details}), 400
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
 @app.route("/auth-status", methods=["POST"])
 def auth_status():
     try:
@@ -2161,6 +3391,18 @@ def auth_status():
         return jsonify({"error": f"HTTP error: {exc}", "details": details}), 400
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/download-team-posture-export")
+def download_team_posture_export():
+    export_id = request.args.get("export_id", "")
+    kind = request.args.get("kind", "")
+    if not export_id or export_id not in TEAM_EXPORT_CACHE:
+        return Response("Invalid export id", status=400)
+    path = TEAM_EXPORT_CACHE[export_id].get(kind)
+    if not path:
+        return Response("Invalid export kind", status=400)
+    return send_file(path, as_attachment=True)
 
 
 @app.route("/download-csms-export")

@@ -1,113 +1,115 @@
+# CSMS Operations Dashboard (Jira Export Helper)
 
-# Jira Export Helper
+Single-file Flask app (`app.py`) that serves the **CSMS Operations** web UI and Jira-backed APIs: executive CSMS summary, team posture, legacy CSV exports, trends dashboard, auth diagnostics, and downloads (CSV, Excel, PDF, ZIP).
 
-This tool calls a Jira Search API endpoint, expands changelog history, and exports:
+Default dev URL: `http://127.0.0.1:5001`
 
-1. `issue_summary_YYYYMMDD_HHMMSS.csv`  
-   One row per issue with current snapshot fields, SLA/resolution metrics, and workflow-agnostic status transition columns.
+---
 
-2. `issue_activity_YYYYMMDD_HHMMSS.csv`  
-   One row per changelog item with:
-   - Issue Key
-   - Change Date
-   - Author
-   - Field
-   - From
-   - To
+## Navigation (sidebar)
 
-3. `jira_exports_YYYYMMDD_HHMMSS.zip`  
-   Bundle containing both CSVs and run metadata.
+| Tab | Purpose |
+|-----|---------|
+| **Executive** | CSMS Operations Portfolio — KPIs, narratives, health panel, stuck ticket drill-down, Chart.js (daily trend, top category, status). |
+| **Team** | Per-member ticket posture — metric cards, status summary, oldest open detail, label pie chart, CSV preview, exports. |
+| **Trends** | Legacy dashboard — created/updated/resolved trends and current status distribution charts; shares **Report Settings** with Data Exports. |
+| **Notes** | In-app explainer for CSMS KPIs, Team Posture definitions, usage, and auth/data quality tips. |
+| **U** (Auth) | Jira API auth diagnostics (`/myself`, visible projects, CSSD/CSD access flags). |
+| **Theme** | Light / dark / system theme toggle (persisted in the browser). |
 
-## Features
+**Variables & Settings** are collapsible cards per scope: Legacy export form, CSMS parameters, and Team Posture parameters (shown/hidden based on the active tab).
 
-- Multiple projects
-- Multiple issue types
-- Current status filter
-- Assignee filter
-- Label filter
-- Date-field selection (`created`, `updated`, `resolutiondate`)
-- Date/time range
-- Time block filter on changelog events
-- Optional custom JQL override
-- Pagination
-- Optional exclusion of admin workflow events
-- Wide status transition columns (`Status 1..30 From/To/Timestamp/Author`)
-- `Status Transition Count`, `Status Overflow Count`, and `Status Path`
-- Simple HTML UI
+---
+
+## HTTP API (summary)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Main HTML UI (`render_template_string`). |
+| `POST` | `/preview-jql` | Returns built JQL for the legacy export form. |
+| `POST` | `/run-export` | Runs full legacy export; returns paths + download links. |
+| `POST` | `/run-csms-exec-summary` | CSMS executive payload + optional CSV ZIP / Excel / PDF exports. |
+| `POST` | `/run-legacy-dashboard` | Legacy trends + chart data (JSON). |
+| `POST` | `/run-team-posture` | Team posture JSON for one member; includes `jql`, `broad_jql`, `metrics`, `warnings`, exports. |
+| `POST` | `/run-team-posture-board-export` | One CSV row per team member (`team_members` in body). |
+| `POST` | `/auth-status` | Auth / visibility diagnostics JSON. |
+| `GET` | `/download?path=...` | Legacy export file download (server-side path). |
+| `GET` | `/download-csms-export?export_id=&kind=` | Cached CSMS export (`csv_zip`, `excel`, `pdf`). |
+| `GET` | `/download-team-posture-export?export_id=&kind=` | Cached team export (`csv`, `excel`). |
+
+---
+
+## Legacy data export (Trends tab + Data Exports)
+
+End-to-end Jira Search with changelog expansion, producing:
+
+1. **`issue_summary_YYYYMMDD_HHMMSS.csv`** — One row per issue: snapshot fields, SLA/resolution columns, status transition slots (`Status 1..30` From/To/Timestamp/Author), transition count, overflow, status path.  
+2. **`issue_activity_YYYYMMDD_HHMMSS.csv`** — One row per changelog item (issue key, date, author, field, from, to).  
+3. **`jira_exports_YYYYMMDD_HHMMSS.zip`** — Bundle + run metadata.
+
+**Features:** multiple projects/issue types/statuses/assignees/labels; `date_field` (`created` / `updated` / `resolutiondate`); date/time range; optional time-of-day filter on changelog events; `extra_jql` / `custom_jql`; pagination; optional workflow admin events; optional comments in summary metrics; SSL verify toggle.
+
+**Endpoints:** `POST /preview-jql`, `POST /run-export`.
+
+---
+
+## CSMS Executive Incident Summary (Executive tab)
+
+- **Rolling periods:** configurable report datetime, period length (days), KPI comparison (backlog, new created, resolved), trend %, narratives, process alignment health, stuck ticket highlight.  
+- **Elapsed time:** optional **Last Report Timestamp** drives the “time since last report” sentence.  
+- **Charts:** daily created/updated/resolved, top category, status mix.  
+- **Business rules:** CSSD final status `Closed`; CSD final status `Ready For Production Users` (used for backlog/open vs final).  
+- **Exports:** CSV ZIP (raw period 1 & 2 + KPI CSV), multi-sheet Excel, PDF summary — via `POST /run-csms-exec-summary` then `/download-csms-export`.
+
+**Form fields (typical):** `base_url`, `projects`, `report_datetime`, `last_report_timestamp`, `period_length`, `issue_types`, `statuses`, `components`, `page_size`, `max_issues`, `process_alignment_pct`, `verify_ssl`.
+
+---
+
+## Team Member Ticket Posture (Team tab)
+
+- **Team roster:** add/remove members (display name + **Assignee username**); roster stored in **browser localStorage**.  
+- **Jira queries:**  
+  - **`jql`** — same filters as broad query **plus** an `assignee in (...)` clause for the selected member’s Jira username.  
+  - **`broad_jql`** — project, issue type, **`created`** date range only (no assignee). Used for worked-on, reopened-in-scope, contributed resolved, and SLA scope over member-linked issues.  
+- **Ownership:** assignee match **or** (CSD project + configured **CSD Assigned Developer** field, default `customfield_14700`) when that field identifies the developer.  
+- **Metric cards:**  
+  - **Resolved (Owned)** — owned tickets whose status matches resolved-style rollups (e.g. resolved, closed, ready for production users, completed, duplicate, dev-completed).  
+  - **Resolved (Contributed)** — same status rollups, member authored ≥1 **status** changelog transition, **not** current owner.  
+  - **Assigned Open** — open by project-specific final status.  
+  - **Reopened** — current status name contains `reopened` / `re-opened` / `re opened`, and member is owner **or** (not owner but has status transitions as author).  
+  - **Worked On (Assigned to Others)** — status-change author is member; current owner ≠ member.  
+  - **SLA Breach Count** — **24h from `created`:** open tickets past 24h; closed tickets prefer Jira **Resolution SLA Breached**-style custom field (discovered via `/rest/api/2/field`), else fallback elapsed created → resolutiondate (or updated). Counts include relevant open + closed breaches in member scope.  
+  - **Open &lt; 8h to SLA breach** — open tickets with under 8 hours remaining before the 24h window.  
+  - **Oldest open** — key + age (days) + detail JSON.  
+- **Other UI:** ticket count by status (owned issues), **Ticket Labels** pie (Chart.js) over **member scope** issues, CSV preview (first rows of raw export).  
+- **Exports:** per-member **CSV** + **Excel** (raw tickets + summary metrics); **Download Team CSV** — `POST /run-team-posture-board-export` with all members.  
+- **Warnings:** if Jira returns 500 with `changelog` expansion, the app may retry without changelog (reopen / worked-on / contributed paths may be incomplete).
+
+**Form fields:** `base_url`, `projects`, `start_dt`, `end_dt`, `issue_types`, `csd_assigned_dev_field`, `page_size`, `max_issues`, `verify_ssl`, plus per-request `assignee_username` and `member_name`.
+
+---
+
+## Jira authentication
+
+Credentials are **not** entered in the UI. Set environment variables:
+
+- `JIRA_USERNAME` + `JIRA_PASSWORD`, **or**  
+- `JIRA_EMAIL` + `JIRA_API_TOKEN`  
+
+Use **Auth** tab (`POST /auth-status`) to confirm `myself`, visible projects, and CSSD/CSD access.
+
+---
 
 ## Setup
 
-Create a virtual environment and install dependencies:
-
 ```bash
 python -m venv .venv
-source .venv/bin/activate   # macOS / Linux
-pip install flask requests
+# Windows: .\.venv\Scripts\Activate.ps1
+# macOS/Linux: source .venv/bin/activate
+pip install flask requests openpyxl reportlab
 ```
 
-Set Jira credentials as environment variables.
-
-macOS / Linux:
-```bash
-export JIRA_USERNAME="your_username"
-export JIRA_PASSWORD="your_password"
-```
-
-or
-```bash
-export JIRA_EMAIL="you@example.com"
-export JIRA_API_TOKEN="your_token"
-```
-
-Windows (PowerShell) - current session only:
-```powershell
-$env:JIRA_USERNAME="your_username"
-$env:JIRA_PASSWORD="your_password"
-```
-
-or
-```powershell
-$env:JIRA_EMAIL="you@example.com"
-$env:JIRA_API_TOKEN="your_token"
-```
-
-Windows (PowerShell) - persist for future sessions:
-```powershell
-[Environment]::SetEnvironmentVariable("JIRA_USERNAME", "your_username", "User")
-[Environment]::SetEnvironmentVariable("JIRA_PASSWORD", "your_password", "User")
-```
-
-or
-```powershell
-[Environment]::SetEnvironmentVariable("JIRA_EMAIL", "you@example.com", "User")
-[Environment]::SetEnvironmentVariable("JIRA_API_TOKEN", "your_token", "User")
-```
-
-Windows (Command Prompt / cmd.exe) - current session only:
-```cmd
-set JIRA_USERNAME=your_username
-set JIRA_PASSWORD=your_password
-```
-
-or
-```cmd
-set JIRA_EMAIL=you@example.com
-set JIRA_API_TOKEN=your_token
-```
-
-Windows (Command Prompt / cmd.exe) - persist for future sessions:
-```cmd
-setx JIRA_USERNAME "your_username"
-setx JIRA_PASSWORD "your_password"
-```
-
-or
-```cmd
-setx JIRA_EMAIL "you@example.com"
-setx JIRA_API_TOKEN "your_token"
-```
-
-After setting persistent variables, restart PowerShell/Cursor terminal.
+---
 
 ## Run
 
@@ -115,226 +117,68 @@ After setting persistent variables, restart PowerShell/Cursor terminal.
 python app.py
 ```
 
-Then open:
+Default port **5001** (see `app.run` at bottom of `app.py`).
 
-```text
-http://127.0.0.1:5001
-```
+### Windows (recommended)
 
-### Windows quick start (recommended)
-
-In PowerShell, set credentials and start the app from the same terminal session:
+Use the venv interpreter to avoid the Windows Store `python.exe` shim:
 
 ```powershell
-# from the project folder
-& ".\.venv\Scripts\Activate.ps1"
-
-# recommended: API token auth
+cd path\to\jira_export_app
+.\.venv\Scripts\Activate.ps1
 $env:JIRA_EMAIL="you@example.com"
 $env:JIRA_API_TOKEN="your_token"
-
-# start the app using the venv python (avoids Windows Store python alias issues)
 .\.venv\Scripts\python.exe .\app.py
 ```
 
-If you see “Login Required” / “anonymous user” errors after setting env vars, restart the app so it picks up the variables.
+---
 
-## UI Fields (What to Enter)
+## Legacy UI field reference (export form)
 
-Use the form on the home page to define your export request.
+- **Required / common:** `base_url`, `projects`  
+- **Filters:** `issue_types`, `statuses`, `assignees`, `labels`  
+- **Dates:** `date_field`, `start_dt`, `end_dt`, `time_block_start`, `time_block_end`  
+- **Limits:** `page_size` (1–100), `max_issues` (`0` = no cap)  
+- **JQL:** `extra_jql`, `custom_jql` (override replaces builder)  
+- **Checkboxes:** `include_comments`, `include_workflow_events`, `verify_ssl`
 
-Required / recommended:
-- `Jira Search Endpoint` (`base_url`): Jira search API URL.  
-  Example: `https://your-jira-domain/rest/api/2/search`
-- `Projects` (`projects`): Comma-separated project keys.  
-  Example: `CSSD,ABC`
+---
 
-Common filters (optional):
-- `Issue Types` (`issue_types`): `Bug,Task,Story`
-- `Current Statuses` (`statuses`): `Open,In Progress,Closed`
-- `Assignees` (`assignees`): Jira usernames/account identifiers, comma separated
-- `Labels` (`labels`): Comma-separated labels
+## CSMS period windows (reference)
 
-Date and time controls:
-- `Date Field` (`date_field`): One of `created`, `updated`, `resolutiondate`
-- `Start Date/Time` (`start_dt`): Lower bound for selected date field
-- `End Date/Time` (`end_dt`): Upper bound for selected date field
-- `Time Block Start` (`time_block_start`): Optional time-of-day start (HH:MM)
-- `Time Block End` (`time_block_end`): Optional time-of-day end (HH:MM)
+For report date `R` and period length `N` days:
 
-Query and limits:
-- `Page Size` (`page_size`): Jira page size per request (default `50`, max `100`)
-- `Max Issues` (`max_issues`): `0` means no cap; otherwise stop at this many issues
-- `Extra JQL` (`extra_jql`): Extra clause appended with `AND`
-- `Custom JQL Override` (`custom_jql`): Full JQL; when set, it replaces builder inputs
-  - Example: `issuekey = CSSD-123` (do not prefix with `custom_jql =`)
+- **Period 2:** `R-(N-1)` through `R`  
+- **Period 1:** the preceding `N` days ending the day before Period 2 starts  
 
-Checkbox options:
-- `Include comments in summary metrics` (`include_comments`)
-- `Include workflow admin changes in activity export` (`include_workflow_events`)
-- `Verify SSL` (`verify_ssl`)
+---
 
-Important:
-- Jira credentials are **not entered in the UI**; they come from environment variables (`JIRA_USERNAME`/`JIRA_PASSWORD` or `JIRA_EMAIL`/`JIRA_API_TOKEN`).
+## Summary CSV schema (legacy export)
 
-## Tabs
+Includes core snapshot columns, SLA fields (`First Response Date`, `Resolution`, `Resolution Date`, time-to-response/resolution, SLA breached flags), `Status Transition Count`, `Status Overflow Count`, `Status Path`, and `Status 1..30` From/To/Timestamp/Author. Activity CSV remains row-per-changelog-item.
 
-The app now has two report tabs:
+---
 
-- `Legacy Reports`: existing export workflow (`/preview-jql`, `/run-export`) preserved for backward compatibility.
-- `CSMS Executive Incident Summary`: new executive dashboard comparing two rolling periods.
+## Batch / automation
 
-### CSMS Executive Incident Summary Inputs
+- **UI:** repeat export runs with different project/date windows; filenames are timestamped.  
+- **Scripted:** `POST http://127.0.0.1:5001/run-export` with JSON body (see previous README examples); same pattern for `/run-csms-exec-summary`, `/run-team-posture`, etc.
 
-- `Jira Search Endpoint` (`base_url`)
-- `Projects` (`projects`) default `CSSD,CSD,CDF`
-- `Report Generation Date/Time` (`report_datetime`)
-- `Period Length (days)` (`period_length`, default `15`)
-- `Issue Types` (`issue_types`)
-- `Status Filters` (`statuses`)
-- `Components` (`components`)
-- `Page Size` (`page_size`)
-- `Max Issues` (`max_issues`)
-- `Process Alignment %` (`process_alignment_pct`, default `60`)
+---
 
-### CSMS Period Windows
+## Troubleshooting
 
-For report date `R` and period length `N`:
+- **401 / anonymous:** restart the app after setting `JIRA_*` env vars; confirm Auth tab.  
+- **400/500 from Jira:** JSON error responses often include server `details`.  
+- **Team counts look wrong:** compare `broad_jql` from the API response to Issue Navigator — **`created`** window must include the tickets you expect; member **username** must match a Jira user field (`name`, `key`, `emailAddress`, `displayName`, …).  
+- **SSL:** uncheck **Verify SSL** only if appropriate for your environment.
 
-- `Period 2` = `R-(N-1)` through `R`
-- `Period 1` = the preceding `N` days ending one day before `Period 2`
+---
 
-Example for `R=2026-04-28`, `N=15`:
-- `Period 2`: `2026-04-14` to `2026-04-28`
-- `Period 1`: `2026-03-30` to `2026-04-13`
+## Default Jira search URL (example)
 
-### CSMS Business Rules
-
-- CSSD final status: `Closed`
-- CSD final status: `Ready For Production Users`
-- Backlog counts issues not yet in project final status.
-
-### CSMS Export Artifacts
-
-After `Refresh from Jira API`, the dashboard exposes:
-
-- CSV export (ZIP): `raw_period1`, `raw_period2`, and KPI table CSVs
-- Excel export: one workbook with separate sheets for period raw rows and KPI metrics
-- PDF export: executive summary snapshot (KPIs + narratives)
-
-### CSMS Troubleshooting
-
-- Jira 400/500 API errors are returned with server response details in JSON.
-- If Jira returns a referral ID in an error page, include it when contacting Jira administrators.
-- For large result sets, increase `page_size` and keep `max_issues=0` to allow full pagination.
-
-## Summary Output (Current Schema)
-
-`issue_summary_*.csv` includes:
-- Core issue snapshot fields (`Issue Key`, `Summary`, `Issue Type`, `Priority`, `Assignee`, etc.)
-- SLA/resolution fields:
-  - `First Response Date`
-  - `Resolution`
-  - `Resolution Date`
-  - `Time to First Response`
-  - `First Response SLA Breached`
-  - `Time to Resolution`
-  - `Resolution SLA Breached`
-- Workflow-agnostic status movement fields:
-  - `Status Transition Count`
-  - `Status Overflow Count` (`max(0, transition_count - 30)`)
-  - `Status Path` (single serialized path)
-  - `Status 1..30 From/To/Timestamp/Author`
-
-`issue_activity_*.csv` remains the detailed source of truth with:
-- `Issue Key`, `Change Date`, `Author`, `Field`, `From`, `To`
-
-## Batch Reports Process
-
-### UI batch process (manual, repeatable)
-
-Use this when you want controlled project/date-window runs from the app UI.
-
-1. Start app and confirm credentials are available in the same terminal session.
-2. For each batch window, set:
-   - `Projects` (example: `CSSD`)
-   - `Date Field` (usually `created` or `updated`)
-   - `Start Date/Time`
-   - `End Date/Time`
-   - Optional filters (`Issue Types`, `Statuses`, `Labels`, `Assignees`)
-3. Run export and download generated files.
-4. Repeat for the next window/project.
-
-Suggested project/date-window batch set (example):
-- Run A: Project `CSSD`, `created`, `2026-04-01 00:00` to `2026-04-07 23:59`
-- Run B: Project `CSSD`, `created`, `2026-04-08 00:00` to `2026-04-14 23:59`
-- Run C: Project `CSSD`, `created`, `2026-04-15 00:00` to `2026-04-21 23:59`
-- Run D: Project `ABC`, `created`, `2026-04-01 00:00` to `2026-04-21 23:59`
-
-Because filenames are timestamped, each run produces unique artifacts.
-
-### Scripted batch process (PowerShell)
-
-Use this for repeatable local automation against the running app.
-
-```powershell
-$batch = @(
-  @{ projects = "CSSD"; date_field = "created"; start_dt = "2026-04-01T00:00"; end_dt = "2026-04-07T23:59" },
-  @{ projects = "CSSD"; date_field = "created"; start_dt = "2026-04-08T00:00"; end_dt = "2026-04-14T23:59" },
-  @{ projects = "ABC";  date_field = "updated"; start_dt = "2026-04-01T00:00"; end_dt = "2026-04-21T23:59" }
-)
-
-foreach ($item in $batch) {
-  $payload = @{
-    base_url = "https://jira.mdthink.maryland.gov/rest/api/2/search"
-    projects = $item.projects
-    date_field = $item.date_field
-    start_dt = $item.start_dt
-    end_dt = $item.end_dt
-    page_size = 50
-    max_issues = 0
-    include_comments = $true
-    include_workflow_events = $false
-    verify_ssl = $true
-    extra_jql = ""
-    custom_jql = ""
-  } | ConvertTo-Json
-
-  $resp = Invoke-RestMethod -Uri "http://127.0.0.1:5001/run-export" -Method Post -ContentType "application/json" -Body $payload
-  $resp | Select-Object jql, issue_count, summary_rows, activity_rows, files
-}
-```
-
-### Batch troubleshooting
-
-- If responses look anonymous or empty unexpectedly, restart app after setting `JIRA_*` env vars.
-- `custom_jql` overrides all builder filters (`projects`, dates, statuses, etc.).
-- Timestamped filenames are expected and help separate batch artifacts.
-
-## Endpoint example
-
-Default base URL:
 ```text
 https://jira.mdthink.maryland.gov/rest/api/2/search
 ```
 
-Example generated JQL:
-```text
-project in ("CSSD", "CSD", "CDF") AND issuetype in ("Bug") AND created >= "2026-04-01 00:00" AND created <= "2026-04-21 23:59"
-```
-
-## Notes
-
-- First response/resolution SLA columns can be blank when Jira SLA custom fields have no completed cycles for that issue/request type.
-- Workflow admin change records can be excluded from the activity export.
-- If your Jira server uses self-signed certificates, uncheck **Verify SSL** in the UI or set up trusted certs.
-
-## Direct API pattern used
-
-The app calls the search endpoint with parameters similar to:
-
-```text
-/rest/api/2/search?jql=project in (CSSD, CSD, CDF)&expand=changelog&maxResults=50
-```
-
-and paginates until all results are collected or `Max Issues` is reached.
+Search requests use `expand=changelog` where applicable and paginate until `max_issues` or end of results.
