@@ -10,9 +10,9 @@ Default dev URL: `http://127.0.0.1:5001`
 
 | Tab | Purpose |
 |-----|---------|
-| **Executive** | CSMS Operations Portfolio — KPIs, narratives, health panel, stuck ticket drill-down, Chart.js (daily trend, top category, status). |
-| **Team** | Per-member ticket posture — metric cards, status summary, oldest open detail, label pie chart, CSV preview, exports. |
-| **Trends** | Legacy dashboard — created/updated/resolved trends and current status distribution charts; shares **Report Settings** with Data Exports. |
+| **Executive Report** | CSMS Application — KPIs, narratives, health panel, stuck ticket drill-down, Chart.js (daily trend, top category, status). |
+| **Operations Team** | Per-member ticket posture — metric cards, status summary, oldest open detail, label pie chart, CSV preview, exports. |
+| **Ticket trend** | Legacy dashboard — created/updated/resolved trends and current status distribution charts; shares **Report Settings** with Data Exports. |
 | **Notes** | In-app explainer for CSMS KPIs, Team Posture definitions, usage, and auth/data quality tips. |
 | **U** (Auth) | Jira API auth diagnostics (`/myself`, visible projects, CSSD/CSD access flags). |
 | **Theme** | Light / dark / system theme toggle (persisted in the browser). |
@@ -31,7 +31,7 @@ Default dev URL: `http://127.0.0.1:5001`
 | `POST` | `/run-csms-exec-summary` | CSMS executive payload + optional CSV ZIP / Excel / PDF exports. |
 | `POST` | `/run-legacy-dashboard` | Legacy trends + chart data (JSON). |
 | `POST` | `/run-team-posture` | Team posture JSON for one member; includes `jql`, `broad_jql`, `metrics`, `warnings`, exports. |
-| `POST` | `/run-team-posture-board-export` | One CSV row per team member (`team_members` in body). |
+| `POST` | `/run-team-posture-board-export` | Team board export for all submitted members; includes dashboard-bucket tagging rows for matched tickets. |
 | `POST` | `/auth-status` | Auth / visibility diagnostics JSON. |
 | `GET` | `/download?path=...` | Legacy export file download (server-side path). |
 | `GET` | `/download-csms-export?export_id=&kind=` | Cached CSMS export (`csv_zip`, `excel`, `pdf`). |
@@ -61,7 +61,7 @@ End-to-end Jira Search with changelog expansion, producing:
 - **Business rules:** CSSD final status `Closed`; CSD final status `Ready For Production Users` (used for backlog/open vs final).  
 - **Exports:** CSV ZIP (raw period 1 & 2 + KPI CSV), multi-sheet Excel, PDF summary — via `POST /run-csms-exec-summary` then `/download-csms-export`.
 
-**Form fields (typical):** `base_url`, `projects`, `report_datetime`, `last_report_timestamp`, `period_length`, `issue_types`, `statuses`, `components`, `page_size`, `max_issues`, `process_alignment_pct`, `verify_ssl`.
+**Form fields (typical):** `base_url`, `projects`, `report_datetime`, `last_report_timestamp`, `last_report_backlog_tickets`, `last_report_new_created`, `last_report_resolved_tickets`, `period_length`, `issue_types`, `statuses`, `components`, `page_size`, `max_issues`, `process_alignment_pct`, `verify_ssl`.
 
 ---
 
@@ -74,6 +74,7 @@ End-to-end Jira Search with changelog expansion, producing:
 - **Ownership:** assignee match **or** (CSD project + configured **CSD Assigned Developer** field, default `customfield_14700`) when that field identifies the developer.  
 - **Metric cards:**  
   - **Resolved (Owned)** — owned tickets whose status matches resolved-style rollups (e.g. resolved, closed, ready for production users, completed, duplicate, dev-completed).  
+  - **Resolved (Last 8 Hours)** — owned tickets resolved within the last 8 hours.  
   - **Resolved (Contributed)** — same status rollups, member authored ≥1 **status** changelog transition, **not** current owner.  
   - **Assigned Open** — open by project-specific final status.  
   - **Reopened** — current status name contains `reopened` / `re-opened` / `re opened`, and member is owner **or** (not owner but has status transitions as author).  
@@ -82,7 +83,7 @@ End-to-end Jira Search with changelog expansion, producing:
   - **Open &lt; 8h to SLA breach** — open tickets with under 8 hours remaining before the 24h window.  
   - **Oldest open** — key + age (days) + detail JSON.  
 - **Other UI:** ticket count by status (owned issues), **Ticket Labels** pie (Chart.js) over **member scope** issues, CSV preview (first rows of raw export).  
-- **Exports:** per-member **CSV** + **Excel** (raw tickets + summary metrics); **Download Team CSV** — `POST /run-team-posture-board-export` with all members.  
+- **Exports:** per-member **CSV** + **Excel** (raw tickets + summary metrics); **Download Team CSV** — `POST /run-team-posture-board-export` with all members and row-level dashboard bucket tags (one row per issue per matching bucket).  
 - **Warnings:** if Jira returns 500 with `changelog` expansion, the app may retry without changelog (reopen / worked-on / contributed paths may be incomplete).
 
 **Form fields:** `base_url`, `projects`, `start_dt`, `end_dt`, `issue_types`, `csd_assigned_dev_field`, `page_size`, `max_issues`, `verify_ssl`, plus per-request `assignee_username` and `member_name`.
