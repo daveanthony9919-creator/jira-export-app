@@ -36,6 +36,23 @@ TEAM_POSTURE_RESOLVED_STATUS_KEYWORDS: Tuple[str, ...] = (
     "duplicate",
 )
 
+# Default Team tab roster when localStorage has no saved members.
+# "username" is the JQL assignee literal passed through assignee in ("...") (see build_team_posture_jql / jql_quote).
+# Use the same token your Jira accepts in Issue Navigator; swap for accountId or legacy username if needed.
+TEAM_DEFAULT_MEMBERS: List[Dict[str, str]] = [
+    {"id": "default_akanksha_mittal", "name": "Akanksha", "username": "akanksha.mittal@maryland.gov"},
+    {"id": "default_anshuli_chaturvedi", "name": "Anshuli", "username": "anshuli.chaturvedi@maryland.gov"},
+    {"id": "default_brahmendra_pathuri", "name": "Brahmendra", "username": "brahmendra.pathuri@maryland.gov"},
+    {"id": "default_dustin_motley", "name": "Dustin", "username": "dustin.motley@maryland.gov"},
+    {"id": "default_mathivathana_sakthipondu", "name": "Mathivathana", "username": "mathivathana.sakthipondu@maryland.gov"},
+    {"id": "default_naga_neppalli", "name": "Naga", "username": "naga.neppalli@maryland.gov"},
+    {"id": "default_nischay_modi", "name": "Nischay", "username": "nischay.modi@maryland.gov"},
+    {"id": "default_pooja_parbadia", "name": "Pooja", "username": "pooja.parbadia@maryland.gov"},
+    {"id": "default_sravanthi_kopalli", "name": "Sravanthi", "username": "sravanthirajendra.kopalli@maryland.gov"},
+    {"id": "default_sulabh_kukreja", "name": "Sulabh", "username": "sulabh.kukreja@maryland.gov"},
+    {"id": "default_swapnil_bante", "name": "Swapnil", "username": "swapnil.bante@maryland.gov"},
+]
+
 HTML = """
 <!doctype html>
 <html lang="en">
@@ -555,6 +572,11 @@ HTML = """
     .kpi-number { font-size: 36px; font-weight: 800; margin: 8px 0 6px; color: var(--kpi-strong); line-height: 1; }
     .kpi-label { color: var(--muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
     .kpi-trend { font-size: 12px; font-weight: 700; }
+    #teamMetricsGrid .team-metric-card,
+    #csmsKpis .kpi-card,
+    #legacyKpis .kpi-card {
+      cursor: help;
+    }
     .trend-pos { color: var(--trend-good); }
     .trend-neg { color: var(--trend-bad); }
     .section-title {
@@ -644,11 +666,11 @@ HTML = """
   <div class="wrap">
     <div class="card app-nav">
       <div class="app-nav-shell">
-        <h1 class="app-nav-title">CSMS<br/>OPERATIONS</h1>
+        <h1 class="app-nav-title">CSMS Reporting</h1>
         <div class="app-nav-actions">
-          <button type="button" class="muted-btn report-tab active" data-report="csms" title="Executive Summary">Executive</button>
-          <button type="button" class="muted-btn report-tab" data-report="team" title="Team Posture">Team</button>
-          <button type="button" class="muted-btn report-tab" data-report="legacy" title="General Report">Trends</button>
+          <button type="button" class="muted-btn report-tab active" data-report="csms" title="Executive Report">Executive Report</button>
+          <button type="button" class="muted-btn report-tab" data-report="team" title="Operations Team">Operations Team</button>
+          <button type="button" class="muted-btn report-tab" data-report="legacy" title="Ticket trend">Ticket trend</button>
           <button type="button" class="muted-btn report-tab" data-report="notes" title="Notes & Guides">Notes</button>
           <button type="button" class="muted-btn report-tab auth-icon-btn" data-report="auth" title="Auth diagnostics" aria-label="Auth diagnostics">U</button>
           <button type="button" class="muted-btn theme-toggle" id="themeToggle" aria-label="Toggle theme" title="Switch theme">◐</button>
@@ -660,7 +682,7 @@ HTML = """
       <div class="card">
         <div class="hero-head">
           <div>
-            <h1 class="section-title">CSMS Operations Portfolio</h1>
+            <h1 class="section-title">CSMS Application</h1>
             <p id="csmsSubtitle" class="section-subtitle">Executive Incident Summary</p>
             <p id="csmsElapsed" class="elapsed-note">Elapsed time sentence appears after a report run.</p>
           </div>
@@ -681,14 +703,14 @@ HTML = """
       </div>
       <div class="card" style="margin-top:18px;">
         <h2>Charts</h2>
-        <div class="csms-chart-wrap daily">
+        <div class="csms-chart-wrap daily" title="Daily created and updated ticket counts for the current period, split by top components.">
           <canvas id="dailyTrendChart"></canvas>
         </div>
         <div class="csms-chart-grid">
-          <div class="csms-chart-wrap small">
+          <div class="csms-chart-wrap small" title="Top five issue types or components by ticket count in the current period.">
             <canvas id="topCategoryChart"></canvas>
           </div>
-          <div class="csms-chart-wrap small">
+          <div class="csms-chart-wrap small" title="How tickets in the current period snapshot are spread across current statuses.">
             <canvas id="statusChart"></canvas>
           </div>
         </div>
@@ -701,19 +723,21 @@ HTML = """
           <div>
             <h2>Team Member Ticket Posture</h2>
             <p class="small">Click a team member to load stand-up and EOD posture metrics.</p>
+            <p id="teamReportPeriod" class="small" style="margin-top:8px;color:var(--muted);">Report period: set Start and End in Team Posture settings.</p>
           </div>
         </div>
         <div id="teamMemberGrid" class="member-grid"></div>
         <div id="teamMetricsGrid" class="team-grid">
-          <div class="team-metric-card"><div class="label">Resolved (Owned)</div><div id="teamResolvedOwnedCount" class="value">--</div></div>
-          <div class="team-metric-card"><div class="label">Resolved (Contributed)</div><div id="teamResolvedContributedCount" class="value">--</div></div>
-          <div class="team-metric-card"><div class="label">Assigned Open Tickets</div><div id="teamOpenCount" class="value">--</div></div>
-          <div class="team-metric-card"><div class="label">Reopened Tickets</div><div id="teamReopenedCount" class="value">--</div></div>
-          <div class="team-metric-card"><div class="label">Worked On (Assigned to Others)</div><div id="teamWorkedOtherCount" class="value">--</div></div>
-          <div class="team-metric-card"><div class="label">SLA Breach Count</div><div id="teamSlaBreachCount" class="value">--</div></div>
-          <div class="team-metric-card"><div class="label">Open Tickets &lt; 8h to SLA Breach</div><div id="teamSlaNearCount" class="value">--</div></div>
-          <div class="team-metric-card"><div class="label">Oldest Open Ticket</div><div id="teamOldestTicket" class="value">--</div></div>
-          <div class="team-metric-card"><div class="label">Oldest Open Age (days)</div><div id="teamOldestAge" class="value">--</div></div>
+          <div class="team-metric-card" title="Open tickets tied to this member as assignee or CSD Assigned Developer when configured. Done means Closed on CSSD and Ready For Production Users on CSD."><div class="label">Assigned Open Tickets</div><div id="teamOpenCount" class="value">--</div></div>
+          <div class="team-metric-card" title="Tickets in the date window whose status sounds reopened, where the member owns the ticket or authored at least one status change."><div class="label">Reopened Tickets</div><div id="teamReopenedCount" class="value">--</div></div>
+          <div class="team-metric-card" title="Tickets assigned to this member whose status looks finished, such as resolved, closed, completed, or duplicate."><div class="label">Resolved (Owned)</div><div id="teamResolvedOwnedCount" class="value">--</div></div>
+          <div class="team-metric-card" title="Finished tickets owned by someone else where this member changed the status at least once."><div class="label">Resolved (Contributed)</div><div id="teamResolvedContributedCount" class="value">--</div></div>
+          <div class="team-metric-card" title="Tickets you own that have a Jira resolution time in the rolling last eight hours from when this report ran. Uses the same finished-status rules as Resolved (Owned)."><div class="label">Resolved (Last 8 Hours)</div><div id="teamResolvedLast8hCount" class="value">--</div></div>
+          <div class="team-metric-card" title="Tickets owned by someone else where this member still changed the status at least once."><div class="label">Worked On (Assigned to Others)</div><div id="teamWorkedOtherCount" class="value">--</div></div>
+          <div class="team-metric-card" title="Tickets in this member scope that missed the 24-hour expectation from created time, using the Jira resolution SLA breached field when available, otherwise time to finish."><div class="label">SLA Breach Count</div><div id="teamSlaBreachCount" class="value">--</div></div>
+          <div class="team-metric-card" title="Open tickets still within 24 hours from created but with under eight hours left before that window ends."><div class="label">Open Tickets &lt; 8h to SLA Breach</div><div id="teamSlaNearCount" class="value">--</div></div>
+          <div class="team-metric-card" title="Among open tickets assigned to this member, the issue key that has waited the longest since creation."><div class="label">Oldest Open Ticket</div><div id="teamOldestTicket" class="value">--</div></div>
+          <div class="team-metric-card" title="How many days that oldest open ticket has been waiting."><div class="label">Oldest Open Age (days)</div><div id="teamOldestAge" class="value">--</div></div>
         </div>
       </div>
       <div class="two-col" style="margin-top:18px;">
@@ -726,7 +750,7 @@ HTML = """
           <pre id="teamOldestDetail">Select a member and refresh.</pre>
         </div>
       </div>
-      <div class="card" style="margin-top:18px;">
+      <div class="card" style="margin-top:18px;" title="How tickets in this member scope are split across Jira labels.">
         <h2>Ticket Labels</h2>
         <div class="legacy-chart-wrap daily">
           <canvas id="teamLabelsChart"></canvas>
@@ -737,21 +761,23 @@ HTML = """
     <section id="legacyDashboardSection" class="app-section report-scope-legacy" hidden>
       <div class="card" style="margin-top:18px;">
         <h2>Trends</h2>
+        <p id="legacyReportPeriod" class="small" style="margin:4px 0 12px;color:var(--muted);">Report period: set Start and End in Report Settings.</p>
+        <div class="row kpi-grid" id="legacyKpis"></div>
         <h3 style="margin:0 0 8px;">Created / Updated / Resolved Trends</h3>
-        <div class="legacy-chart-wrap daily">
+        <div class="legacy-chart-wrap daily" title="Tickets from your legacy query: how many were created, updated, or resolved on each day in the chart window.">
           <canvas id="legacyDailyChart"></canvas>
         </div>
         <h3 style="margin:14px 0 8px;">Current Status Distribution</h3>
-        <div class="legacy-chart-wrap status">
+        <div class="legacy-chart-wrap status" title="Share of tickets from your legacy query by their current Jira status.">
           <canvas id="legacyStatusChart"></canvas>
         </div>
       </div>
       <div class="two-col" style="margin-top:18px;">
-        <div class="card">
+        <div class="card" title="Short automated observations after you refresh the legacy dashboard.">
           <h2>Insights</h2>
           <pre id="legacyInsights">Run a legacy dashboard refresh.</pre>
         </div>
-        <div class="card">
+        <div class="card" title="Each status from your legacy query and how many tickets are in it.">
           <h2>Status Summary</h2>
           <pre id="legacyStatusSummary">Run a legacy dashboard refresh.</pre>
         </div>
@@ -809,6 +835,9 @@ HTML = """
             <div class="field wide"><label>Projects (comma separated)</label><input name="projects" value="CSSD,CSD,CDF" /></div>
             <div class="field"><label>Report Generation Date/Time</label><input type="datetime-local" name="report_datetime" /></div>
             <div class="field"><label>Last Report Timestamp</label><input type="datetime-local" name="last_report_timestamp" /></div>
+            <div class="field"><label>Last Report Backlog Tickets (optional)</label><input type="number" name="last_report_backlog_tickets" min="0" placeholder="e.g. 42" /></div>
+            <div class="field"><label>Last Report New Created (optional)</label><input type="number" name="last_report_new_created" min="0" placeholder="e.g. 15" /></div>
+            <div class="field"><label>Last Report Resolved Tickets (optional)</label><input type="number" name="last_report_resolved_tickets" min="0" placeholder="e.g. 18" /></div>
             <div class="field"><label>Period Length (days)</label><input type="number" name="period_length" value="15" min="1" /></div>
             <div class="field"><label>Issue Types</label><input name="issue_types" placeholder="Bug, Task" /></div>
             <div class="field"><label>Status Filters</label><input name="statuses" placeholder="New, Open, Closed" /></div>
@@ -883,7 +912,7 @@ HTML = """
     </section>
 
     <section id="authSection" class="app-section report-scope-auth" hidden>
-      <div class="card">
+      <div class="card" title="Runs a credential and project visibility check against your Jira endpoint.">
         <div class="hero-head">
           <div>
             <h2>Jira API Auth Diagnostics</h2>
@@ -899,7 +928,7 @@ HTML = """
     </section>
 
     <section id="notesSection" class="app-section report-scope-notes" hidden>
-      <div class="card">
+      <div class="card" title="Static help text for metrics, team posture, and how to use the dashboard.">
         <div class="hero-head">
           <div>
             <h2>Notes & Guides</h2>
@@ -1120,6 +1149,8 @@ let activeTeamMemberId = null;
 let latestTeamPosturePayload = null;
 let teamPayloadByMemberId = {};
 
+const DEFAULT_TEAM_MEMBERS = __DEFAULT_TEAM_ROSTER_JSON__;
+
 function teamStorageKey() {
   return "team-posture-members-v1";
 }
@@ -1132,10 +1163,7 @@ function loadTeamMembersFromStorage() {
       if (Array.isArray(parsed) && parsed.length) return parsed;
     }
   } catch (e) {}
-  return [
-    { id: "m1", name: "Member 1", username: "member1" },
-    { id: "m2", name: "Member 2", username: "member2" },
-  ];
+  return JSON.parse(JSON.stringify(DEFAULT_TEAM_MEMBERS));
 }
 
 function saveTeamMembersToStorage(members) {
@@ -1194,6 +1222,7 @@ function renderTeamPostureMetrics(payload) {
   const resolvedOwned = metrics.resolved_owned_count ?? metrics.resolved_count ?? 0;
   document.getElementById("teamResolvedOwnedCount").textContent = String(resolvedOwned);
   document.getElementById("teamResolvedContributedCount").textContent = String(metrics.resolved_contributed_count ?? 0);
+  document.getElementById("teamResolvedLast8hCount").textContent = String(metrics.resolved_last_8h_count ?? 0);
   document.getElementById("teamOpenCount").textContent = String(metrics.assigned_open_count ?? 0);
   document.getElementById("teamReopenedCount").textContent = String(metrics.reopened_count ?? 0);
   document.getElementById("teamWorkedOtherCount").textContent = String(metrics.worked_on_assigned_others_count ?? 0);
@@ -1261,6 +1290,7 @@ function renderTeamCsvPreview(rawRows) {
 }
 
 async function refreshTeamPosture() {
+  updateTeamReportPeriodLabel();
   const member = activeTeamMember();
   if (!member) {
     document.getElementById("teamStatusSummary").textContent = "Add and select a member first.";
@@ -1268,25 +1298,33 @@ async function refreshTeamPosture() {
     return;
   }
   const payload = teamFormToObject();
-  const res = await fetch("/run-team-posture", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    document.getElementById("teamStatusSummary").textContent = JSON.stringify(data, null, 2);
-    document.getElementById("teamCsvPreview").textContent = JSON.stringify(data, null, 2);
-    return;
+  try {
+    const res = await fetch("/run-team-posture", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      document.getElementById("teamStatusSummary").textContent = JSON.stringify(data, null, 2);
+      document.getElementById("teamCsvPreview").textContent = JSON.stringify(data, null, 2);
+      return;
+    }
+    latestTeamPosturePayload = data;
+    if (member && member.id) {
+      teamPayloadByMemberId[member.id] = data;
+    }
+    renderTeamPostureMetrics(data);
+    updateTeamReportPeriodLabel();
+  } catch (err) {
+    const msg = `Network error calling /run-team-posture: ${err && err.message ? err.message : String(err)}. If this happens after edits, wait for Flask reload or restart app.py and retry.`;
+    document.getElementById("teamStatusSummary").textContent = msg;
+    document.getElementById("teamCsvPreview").textContent = msg;
   }
-  latestTeamPosturePayload = data;
-  if (member && member.id) {
-    teamPayloadByMemberId[member.id] = data;
-  }
-  renderTeamPostureMetrics(data);
 }
 
 async function refreshAllTeamMembers() {
+  updateTeamReportPeriodLabel();
   if (!teamMembers.length) {
     document.getElementById("teamStatusSummary").textContent = "Add and select a member first.";
     document.getElementById("teamCsvPreview").textContent = "Add and select a member first.";
@@ -1319,6 +1357,56 @@ async function refreshAllTeamMembers() {
   if (!activePayload) {
     document.getElementById("teamStatusSummary").textContent = `No member data loaded (${successCount}/${teamMembers.length} successful).`;
   }
+  updateTeamReportPeriodLabel();
+}
+
+function formatReportDatetimeLocal(value) {
+  const s = (value || "").trim();
+  if (!s) return "";
+  return s.replace("T", " ");
+}
+
+function updateTeamReportPeriodLabel() {
+  const form = document.getElementById("teamPostureForm");
+  const el = document.getElementById("teamReportPeriod");
+  if (!form || !el) return;
+  const start = form.querySelector('input[name="start_dt"]')?.value || "";
+  const end = form.querySelector('input[name="end_dt"]')?.value || "";
+  if (!start && !end) {
+    el.textContent = "Report period: set Start and End in Team Posture settings (created date range for the team JQL).";
+    return;
+  }
+  const a = formatReportDatetimeLocal(start);
+  const b = formatReportDatetimeLocal(end);
+  if (start && end) {
+    el.textContent = `Report period (created): ${a} → ${b}`;
+  } else if (start) {
+    el.textContent = `Report period (created): from ${a}`;
+  } else {
+    el.textContent = `Report period (created): through ${b}`;
+  }
+}
+
+function updateLegacyReportPeriodLabel() {
+  const form = document.getElementById("exportForm");
+  const el = document.getElementById("legacyReportPeriod");
+  if (!form || !el) return;
+  const start = form.querySelector('input[name="start_dt"]')?.value || "";
+  const end = form.querySelector('input[name="end_dt"]')?.value || "";
+  const dateField = form.querySelector('select[name="date_field"]')?.value || "created";
+  if (!start && !end) {
+    el.textContent = `Report period: set Start and End in Report Settings (JQL uses the selected date field: ${dateField}).`;
+    return;
+  }
+  const a = formatReportDatetimeLocal(start);
+  const b = formatReportDatetimeLocal(end);
+  if (start && end) {
+    el.textContent = `Report period (${dateField}): ${a} → ${b}`;
+  } else if (start) {
+    el.textContent = `Report period (${dateField}): from ${a}`;
+  } else {
+    el.textContent = `Report period (${dateField}): through ${b}`;
+  }
 }
 
 function setActiveReport(report) {
@@ -1331,6 +1419,8 @@ function setActiveReport(report) {
     btn.classList.toggle("active", btn.getAttribute("data-report") === report);
   });
   window.scrollTo({ top: 0, behavior: "smooth" });
+  if (report === "team") updateTeamReportPeriodLabel();
+  if (report === "legacy") updateLegacyReportPeriodLabel();
 }
 
 document.querySelectorAll(".report-tab").forEach((btn) => {
@@ -1362,6 +1452,13 @@ function trendTone(metricKey, trendValue) {
   return good ? "trend-pos" : "trend-neg";
 }
 
+const CSMS_KPI_TITLES = {
+  backlog: "Open workload at the end of the current reporting window: tickets not yet in each project done status (CSSD uses Closed, CSD uses Ready For Production Users). Trend is percent change versus the previous window.",
+  new_created: "How many tickets matched your filters and fell in the current period. Trend compares to the previous period of the same length.",
+  resolved: "Tickets counted as finished in the current period using each project done status. Trend compares to the previous period.",
+  longest_open: "Oldest ticket that was still open in the current period snapshot: key plus age in days from created.",
+};
+
 function renderCsmsKpis(kpis) {
   const longest = kpis.longest_open || {};
   const cards = [
@@ -1371,7 +1468,7 @@ function renderCsmsKpis(kpis) {
     ["longest_open", "Longest Open", `${longest.age_days || 0} days`, null, `${longest.issue_key || "N/A"}`],
   ];
   const html = cards.map(([metricKey, title, value, trend, subtext]) => `
-    <div class="kpi-card">
+    <div class="kpi-card" title="${CSMS_KPI_TITLES[metricKey] || ""}">
       <div class="kpi-label">${title}</div>
       <div class="kpi-number">${value}</div>
       ${subtext ? `<div class="small">${subtext}</div>` : ""}
@@ -1395,15 +1492,26 @@ function renderCsmsHealth(data) {
   const gap = data.process_gap_identified || "No";
   document.getElementById("csmsHealth").innerHTML = `
     <h3>Operational Health & Readiness</h3>
-    <div>Process Alignment: CSMS ${pct.toFixed(1)}% Complete</div>
-    <div class="progress-wrap"><div class="progress-bar" style="width:${Math.max(0, Math.min(100, pct))}%"></div></div>
-    <div>Process Gap Identified: ${gap}</div>
+    <div title="How complete the CSMS process alignment appears for this run compared to your target percent.">
+      <div>Process Alignment: CSMS ${pct.toFixed(1)}% Complete</div>
+      <div class="progress-wrap"><div class="progress-bar" style="width:${Math.max(0, Math.min(100, pct))}%"></div></div>
+    </div>
+    <div title="Whether this run flagged a process gap from resolved performance.">
+      <div>Process Gap Identified: ${gap}</div>
+    </div>
   `;
 }
 
 function destroyChart(instance) {
   if (instance) instance.destroy();
 }
+
+const LEGACY_KPI_TITLES = [
+  "Number of issues returned by your current legacy filters and caps.",
+  "Total status changes counted across those issues.",
+  "Total comments counted on those issues.",
+  "Number of calendar days in this result set that have at least one created ticket.",
+];
 
 function renderLegacyKpis(kpis) {
   const container = document.getElementById("legacyKpis");
@@ -1414,8 +1522,8 @@ function renderLegacyKpis(kpis) {
     ["Comment Volume", kpis.comment_count || 0],
     ["Date Window Days", kpis.date_window_days || 0],
   ];
-  container.innerHTML = cards.map(([title, value]) => `
-    <div class="kpi-card">
+  container.innerHTML = cards.map(([title, value], i) => `
+    <div class="kpi-card" title="${LEGACY_KPI_TITLES[i] || ""}">
       <div>${title}</div>
       <div class="kpi-number">${value}</div>
     </div>
@@ -1475,6 +1583,7 @@ function renderLegacyStatusSummary(charts) {
 }
 
 async function refreshLegacyDashboard(payload) {
+  updateLegacyReportPeriodLabel();
   const res = await fetch("/run-legacy-dashboard", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1491,6 +1600,7 @@ async function refreshLegacyDashboard(payload) {
   const warningLines = data.warnings || [];
   const insightLines = data.insights || [];
   document.getElementById("legacyInsights").textContent = [...warningLines, ...insightLines].join("\\n");
+  updateLegacyReportPeriodLabel();
 }
 
 function renderCsmsCharts(charts) {
@@ -1628,22 +1738,95 @@ function openTeamExport(kind) {
 document.getElementById("teamExportCsvBtn").addEventListener("click", () => openTeamExport("csv"));
 document.getElementById("teamExportExcelBtn").addEventListener("click", () => openTeamExport("excel"));
 document.getElementById("teamExportAllBtn").addEventListener("click", async () => {
-  const payload = teamFormToObject();
-  payload.team_members = teamMembers;
-  payload.include_all_members = true;
-  const res = await fetch("/run-team-posture-board-export", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    document.getElementById("teamStatusSummary").textContent = JSON.stringify(data, null, 2);
+  const base = teamFormToObject();
+  if (!teamMembers.length) {
+    document.getElementById("teamStatusSummary").textContent = "Add and select a member first.";
     return;
   }
-  if (data.exports && data.exports.csv) {
-    window.open(data.exports.csv, "_blank");
+
+  const exportPayloads = [];
+  const missingMembers = [];
+  const failedMembers = [];
+
+  // Cache-first: use already-fetched member payloads when available; refetch only missing ones.
+  for (const member of teamMembers) {
+    const cached = teamPayloadByMemberId[member.id];
+    if (cached && cached.raw_rows) {
+      exportPayloads.push(cached);
+    } else {
+      missingMembers.push(member);
+    }
   }
+
+  // Refetch missing members using the same posture endpoint as "Refresh All Member Metrics".
+  for (const member of missingMembers) {
+    const payload = { ...base, assignee_username: member.username, member_name: member.name };
+    try {
+      const res = await fetch("/run-team-posture", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        failedMembers.push({ member, error: data });
+        continue;
+      }
+      teamPayloadByMemberId[member.id] = data;
+      exportPayloads.push(data);
+    } catch (err) {
+      failedMembers.push({
+        member,
+        error: err && err.message ? err.message : String(err),
+      });
+    }
+  }
+
+  if (!exportPayloads.length) {
+    document.getElementById("teamStatusSummary").textContent = "No team member data available for export.";
+    return;
+  }
+
+  // Merge member-level raw rows into one board export dataset.
+  const allRows = [];
+  for (const payload of exportPayloads) {
+    const memberName = payload?.member?.name ?? "";
+    const assigneeUsername = payload?.member?.assignee_username ?? "";
+    for (const raw of payload.raw_rows || []) {
+      allRows.push({
+        "Member Name": memberName,
+        "Assignee Username": assigneeUsername,
+        ...raw,
+      });
+    }
+  }
+
+  if (!allRows.length) {
+    document.getElementById("teamStatusSummary").textContent =
+      "Export completed, but there were no matching ticket rows to download.";
+    return;
+  }
+
+  const headers = Object.keys(allRows[0]);
+  const csv = toCsv(allRows, headers);
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `team_posture_board_${stamp}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+
+  const refetchedOk = missingMembers.length - failedMembers.length;
+  const statusParts = [
+    `Team CSV export downloaded (${allRows.length} rows).`,
+    missingMembers.length ? `Refetched ${refetchedOk}/${missingMembers.length} missing member(s).` : "Used cached member(s) only.",
+    failedMembers.length ? `${failedMembers.length} member(s) failed and were skipped.` : "",
+  ].filter(Boolean);
+  document.getElementById("teamStatusSummary").textContent = statusParts.join(" ");
 });
 
 document.getElementById("authCheckBtn").addEventListener("click", async () => {
@@ -1661,9 +1844,22 @@ document.getElementById("authCheckBtn").addEventListener("click", async () => {
   document.getElementById("authResult").textContent = JSON.stringify(data, null, 2);
 });
 
+const teamPostureFormEl = document.getElementById("teamPostureForm");
+if (teamPostureFormEl) {
+  teamPostureFormEl.addEventListener("input", updateTeamReportPeriodLabel);
+  teamPostureFormEl.addEventListener("change", updateTeamReportPeriodLabel);
+}
+const exportFormEl = document.getElementById("exportForm");
+if (exportFormEl) {
+  exportFormEl.addEventListener("input", updateLegacyReportPeriodLabel);
+  exportFormEl.addEventListener("change", updateLegacyReportPeriodLabel);
+}
+
 teamMembers = loadTeamMembersFromStorage();
 activeTeamMemberId = teamMembers[0] ? teamMembers[0].id : null;
 renderTeamMemberIcons();
+updateTeamReportPeriodLabel();
+updateLegacyReportPeriodLabel();
 
 renderCsmsKpis({
   backlog: { period2: "--", trend: 0 },
@@ -1673,6 +1869,7 @@ renderCsmsKpis({
 });
 document.getElementById("csmsElapsed").textContent = "Provide Last Report Timestamp and run CSMS refresh to compute elapsed time.";
 renderCsmsHealth({ process_alignment_pct: 60, process_gap_identified: "Pending run" });
+renderLegacyKpis({ issue_count: 0, transition_count: 0, comment_count: 0, date_window_days: 0 });
 </script>
 </body>
 </html>
@@ -1683,6 +1880,18 @@ def parse_csv_list(value: Optional[str]) -> List[str]:
     if not value:
         return []
     return [v.strip() for v in value.split(",") if v.strip()]
+
+
+def parse_optional_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
 
 
 def normalize_dt_local(value: Optional[str]) -> Optional[str]:
@@ -2456,6 +2665,13 @@ def build_csms_payload(params: Dict[str, Any]) -> Dict[str, Any]:
     p1_new = len(period1_issues)
     p2_new = len(period2_issues)
     oldest_open = get_oldest_open_ticket(period2_issues, project_rules)
+    # Optional explicit prior report KPI baselines.
+    last_report_backlog = parse_optional_int(params.get("last_report_backlog_tickets"))
+    last_report_new_created = parse_optional_int(params.get("last_report_new_created"))
+    last_report_resolved = parse_optional_int(params.get("last_report_resolved_tickets"))
+    trend_base_backlog = last_report_backlog if last_report_backlog is not None else p1_backlog
+    trend_base_new_created = last_report_new_created if last_report_new_created is not None else p1_new
+    trend_base_resolved = last_report_resolved if last_report_resolved is not None else p1_resolved
 
     p2_component_counts = group_by_component(period2_issues)
     top_components = [{"name": k, "count": v} for k, v in Counter(p2_component_counts).most_common(5)]
@@ -2471,7 +2687,7 @@ def build_csms_payload(params: Dict[str, Any]) -> Dict[str, Any]:
     metrics = {
         "top_components": top_components,
         "component_concentration": component_concentration,
-        "resolved_trend": calculate_percent_trend(p1_resolved, p2_resolved),
+        "resolved_trend": calculate_percent_trend(trend_base_resolved, p2_resolved),
         "csd_backlog_trend": csd_backlog_trend,
     }
 
@@ -2480,9 +2696,9 @@ def build_csms_payload(params: Dict[str, Any]) -> Dict[str, Any]:
         "elapsed_time_sentence": elapsed_time_sentence,
         "jql": {"period1": p1_jql, "period2": p2_jql},
         "kpis": {
-            "backlog": {"period1": p1_backlog, "period2": p2_backlog, "trend": calculate_percent_trend(p1_backlog, p2_backlog)},
-            "new_created": {"period1": p1_new, "period2": p2_new, "trend": calculate_percent_trend(p1_new, p2_new)},
-            "resolved": {"period1": p1_resolved, "period2": p2_resolved, "trend": calculate_percent_trend(p1_resolved, p2_resolved)},
+            "backlog": {"period1": trend_base_backlog, "period2": p2_backlog, "trend": calculate_percent_trend(trend_base_backlog, p2_backlog)},
+            "new_created": {"period1": trend_base_new_created, "period2": p2_new, "trend": calculate_percent_trend(trend_base_new_created, p2_new)},
+            "resolved": {"period1": trend_base_resolved, "period2": p2_resolved, "trend": calculate_percent_trend(trend_base_resolved, p2_resolved)},
             "longest_open": oldest_open,
         },
         "charts": {
@@ -3001,6 +3217,29 @@ def count_worked_on_assigned_to_others(issues: List[Dict[str, Any]], assignee_us
     return count
 
 
+def count_owned_resolved_in_last_hours(
+    owned_issues: List[Dict[str, Any]],
+    keywords: Tuple[str, ...],
+    hours: float = 8.0,
+) -> int:
+    """Owned tickets whose Jira resolutiondate falls within the last `hours` from now (UTC)."""
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=hours)
+    n = 0
+    for issue in owned_issues:
+        if not issue_status_matches_keywords(issue, keywords):
+            continue
+        fields = issue.get("fields", {}) or {}
+        resolved_dt = parse_jira_datetime(fields.get("resolutiondate") or "")
+        if not resolved_dt:
+            continue
+        if resolved_dt.tzinfo is None:
+            resolved_dt = resolved_dt.replace(tzinfo=timezone.utc)
+        if resolved_dt >= cutoff:
+            n += 1
+    return n
+
+
 def count_reopened_for_member(issues: List[Dict[str, Any]], assignee_username: str, project_rules: Dict[str, str], csd_assigned_dev_field: str) -> int:
     target = (assignee_username or "").strip().lower()
     if not target:
@@ -3021,6 +3260,105 @@ def count_reopened_for_member(issues: List[Dict[str, Any]], assignee_username: s
         if member_has_status_change(issue, target):
             reopened += 1
     return reopened
+
+
+def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def build_member_dashboard_tagged_rows(
+    broad_issues: List[Dict[str, Any]],
+    assignee_username: str,
+    csd_assigned_dev_field: str,
+    project_rules: Dict[str, str],
+    sla_hours: float = 24.0,
+) -> List[Dict[str, Any]]:
+    """
+    Build ticket-level rows tagged with dashboard buckets expected by Operations Team:
+    assigned open (CSSD/CSD), reopened, open <8h to SLA, oldest open.
+    """
+    target = (assignee_username or "").strip().lower()
+    if not target:
+        return []
+    now = datetime.now(timezone.utc)
+    reopened_status_keywords = ("reopened", "re-opened", "re opened")
+
+    by_key: Dict[str, Dict[str, Any]] = {}
+    for issue in broad_issues:
+        key = str(issue.get("key") or "").strip()
+        if key:
+            by_key[key] = issue
+
+    # Use the same ownership/scope logic as Team posture cards.
+    owned_issues = issues_owned_by_member(broad_issues, assignee_username, csd_assigned_dev_field)
+    member_scope_issues = issues_in_member_scope(broad_issues, assignee_username, csd_assigned_dev_field)
+    open_owned_issues = get_open_issues(owned_issues, project_rules)
+
+    tags_by_key: Dict[str, set] = {}
+
+    # Assigned open CSSD/CSD/general tags.
+    for issue in open_owned_issues:
+        key = str(issue.get("key") or "").strip()
+        if not key:
+            continue
+        project_key = get_issue_project_key(issue)
+        if project_key == "CSSD":
+            tag = "assigned_open_cssd"
+        elif project_key == "CSD":
+            tag = "assigned_open_csd"
+        else:
+            tag = "assigned_open"
+        tags_by_key.setdefault(key, set()).add(tag)
+
+    # Reopened tag using the same predicate as reopened card.
+    for issue in broad_issues:
+        key = str(issue.get("key") or "").strip()
+        if not key:
+            continue
+        current_owner = issue_owner_username(issue, csd_assigned_dev_field)
+        current_status = (get_issue_status(issue) or "").strip().lower()
+        if not any(k in current_status for k in reopened_status_keywords):
+            continue
+        if current_owner == target or member_has_status_change(issue, target):
+            tags_by_key.setdefault(key, set()).add("reopened")
+
+    # Open tickets <8h to SLA tag based on same scope + 24h window logic.
+    for issue in member_scope_issues:
+        key = str(issue.get("key") or "").strip()
+        if not key:
+            continue
+        project_key = get_issue_project_key(issue)
+        final_status = get_project_final_status(project_key, project_rules).strip().lower()
+        current_status = (get_issue_status(issue) or "").strip().lower()
+        if current_status == final_status:
+            continue
+        created_dt = _as_utc(get_issue_created_datetime(issue))
+        if not created_dt:
+            continue
+        remaining_hours = sla_hours - ((now - created_dt).total_seconds() / 3600.0)
+        if 0 <= remaining_hours < 8:
+            tags_by_key.setdefault(key, set()).add("open_lt_8h_to_sla")
+
+    # Oldest open tag from same owned/open logic as oldest-open card.
+    oldest_open = get_oldest_open_ticket(owned_issues, project_rules)
+    oldest_key = str(oldest_open.get("issue_key") or "").strip()
+    if oldest_key:
+        tags_by_key.setdefault(oldest_key, set()).add("oldest_open")
+
+    # Expanded export shape: one row per ticket per dashboard bucket.
+    rows: List[Dict[str, Any]] = []
+    for key in sorted(tags_by_key.keys()):
+        issue = by_key.get(key)
+        if not issue:
+            continue
+        raw = issue_to_raw_row(issue)
+        for tag in sorted(tags_by_key[key]):
+            rows.append({"Dashboard Bucket": tag, **raw})
+    return rows
 
 
 def build_team_posture_payload(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -3078,7 +3416,16 @@ def build_team_posture_payload(params: Dict[str, Any]) -> Dict[str, Any]:
     oldest_open = get_oldest_open_ticket(owned_issues, project_rules)
     reopened_count = count_reopened_for_member(broad_issues, assignee_username, project_rules, csd_assigned_dev_field)
     worked_on_assigned_others_count = count_worked_on_assigned_to_others(broad_issues, assignee_username, csd_assigned_dev_field)
-    raw_rows = [issue_to_raw_row(issue) for issue in owned_issues]
+    resolved_last_8h_count = count_owned_resolved_in_last_hours(
+        owned_issues, TEAM_POSTURE_RESOLVED_STATUS_KEYWORDS, hours=8.0
+    )
+    raw_rows = build_member_dashboard_tagged_rows(
+        broad_issues,
+        assignee_username,
+        csd_assigned_dev_field,
+        project_rules,
+        sla_hours=24.0,
+    )
 
     return {
         "member": {"name": member_name, "assignee_username": assignee_username},
@@ -3093,6 +3440,7 @@ def build_team_posture_payload(params: Dict[str, Any]) -> Dict[str, Any]:
             "assigned_open_count": open_count,
             "reopened_count": reopened_count,
             "worked_on_assigned_others_count": worked_on_assigned_others_count,
+            "resolved_last_8h_count": resolved_last_8h_count,
             "sla_breach_count": sla_metrics["sla_breach_count"],
             "open_near_sla_breach_8h_count": sla_metrics["open_near_sla_breach_8h_count"],
         },
@@ -3113,23 +3461,14 @@ def build_team_board_export_rows(params: Dict[str, Any], members: List[Dict[str,
         member_params["assignee_username"] = username
         member_params["member_name"] = (member.get("name") or username).strip()
         payload = build_team_posture_payload(member_params)
-        metrics = payload.get("metrics") or {}
-        oldest = payload.get("oldest_open") or {}
-        rows.append(
-            {
-                "Member Name": payload["member"]["name"],
-                "Assignee Username": payload["member"]["assignee_username"],
-                "Resolved (Owned)": metrics.get("resolved_owned_count", metrics.get("resolved_count", 0)),
-                "Resolved (Contributed)": metrics.get("resolved_contributed_count", 0),
-                "Assigned Open Tickets": metrics.get("assigned_open_count", 0),
-                "Reopened Tickets": metrics.get("reopened_count", 0),
-                "Worked On (Assigned to Others)": metrics.get("worked_on_assigned_others_count", 0),
-                "SLA Breach Count": metrics.get("sla_breach_count", 0),
-                "Open Tickets < 8h to SLA Breach": metrics.get("open_near_sla_breach_8h_count", 0),
-                "Oldest Open Ticket": oldest.get("issue_key", ""),
-                "Oldest Open Age Days": oldest.get("age_days", ""),
-            }
-        )
+        for raw in payload.get("raw_rows") or []:
+            rows.append(
+                {
+                    "Member Name": payload["member"]["name"],
+                    "Assignee Username": payload["member"]["assignee_username"],
+                    **raw,
+                }
+            )
     return rows
 
 
@@ -3195,7 +3534,8 @@ def get_auth_diagnostics(params: Dict[str, Any]) -> Dict[str, Any]:
 
 @app.route("/")
 def index():
-    return render_template_string(HTML)
+    page = HTML.replace("__DEFAULT_TEAM_ROSTER_JSON__", json.dumps(TEAM_DEFAULT_MEMBERS))
+    return render_template_string(page)
 
 
 @app.route("/preview-jql", methods=["POST"])
@@ -3314,6 +3654,7 @@ def run_team_posture():
         summary_rows = [
             {"Metric": "Resolved (Owned)", "Value": mets.get("resolved_owned_count", mets.get("resolved_count", 0))},
             {"Metric": "Resolved (Contributed)", "Value": mets.get("resolved_contributed_count", 0)},
+            {"Metric": "Resolved (Last 8 Hours)", "Value": mets.get("resolved_last_8h_count", 0)},
             {"Metric": "Assigned Open Tickets", "Value": payload["metrics"]["assigned_open_count"]},
             {"Metric": "Reopened Tickets", "Value": payload["metrics"]["reopened_count"]},
             {"Metric": "Worked On (Assigned to Others)", "Value": payload["metrics"]["worked_on_assigned_others_count"]},
@@ -3426,4 +3767,6 @@ def download():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5001)
+    # Keep debug diagnostics but disable auto-reloader to avoid transient
+    # connection resets/address-in-use during frequent file edits.
+    app.run(debug=True, use_reloader=False, port=5001)
