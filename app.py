@@ -1737,8 +1737,7 @@ function openTeamExport(kind) {
 
 document.getElementById("teamExportCsvBtn").addEventListener("click", () => openTeamExport("csv"));
 document.getElementById("teamExportExcelBtn").addEventListener("click", () => openTeamExport("excel"));
-document.getElementById("teamExportAllBtn").addEventListener("click", async () => {
-  const base = teamFormToObject();
+document.getElementById("teamExportAllBtn").addEventListener("click", () => {
   if (!teamMembers.length) {
     document.getElementById("teamStatusSummary").textContent = "Add and select a member first.";
     return;
@@ -1746,44 +1745,20 @@ document.getElementById("teamExportAllBtn").addEventListener("click", async () =
 
   const exportPayloads = [];
   const missingMembers = [];
-  const failedMembers = [];
 
-  // Cache-first: use already-fetched member payloads when available; refetch only missing ones.
+  // Client-only: merge whatever is already in memory from Refresh / per-member loads. No network calls.
   for (const member of teamMembers) {
     const cached = teamPayloadByMemberId[member.id];
-    if (cached && cached.raw_rows) {
+    if (cached) {
       exportPayloads.push(cached);
     } else {
       missingMembers.push(member);
     }
   }
 
-  // Refetch missing members using the same posture endpoint as "Refresh All Member Metrics".
-  for (const member of missingMembers) {
-    const payload = { ...base, assignee_username: member.username, member_name: member.name };
-    try {
-      const res = await fetch("/run-team-posture", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        failedMembers.push({ member, error: data });
-        continue;
-      }
-      teamPayloadByMemberId[member.id] = data;
-      exportPayloads.push(data);
-    } catch (err) {
-      failedMembers.push({
-        member,
-        error: err && err.message ? err.message : String(err),
-      });
-    }
-  }
-
   if (!exportPayloads.length) {
-    document.getElementById("teamStatusSummary").textContent = "No team member data available for export.";
+    document.getElementById("teamStatusSummary").textContent =
+      "No cached team data yet. Click Refresh All Member Metrics (or select each member once), then try Download Team CSV again.";
     return;
   }
 
@@ -1792,7 +1767,8 @@ document.getElementById("teamExportAllBtn").addEventListener("click", async () =
   for (const payload of exportPayloads) {
     const memberName = payload?.member?.name ?? "";
     const assigneeUsername = payload?.member?.assignee_username ?? "";
-    for (const raw of payload.raw_rows || []) {
+    const rawRows = Array.isArray(payload.raw_rows) ? payload.raw_rows : [];
+    for (const raw of rawRows) {
       allRows.push({
         "Member Name": memberName,
         "Assignee Username": assigneeUsername,
@@ -1803,7 +1779,7 @@ document.getElementById("teamExportAllBtn").addEventListener("click", async () =
 
   if (!allRows.length) {
     document.getElementById("teamStatusSummary").textContent =
-      "Export completed, but there were no matching ticket rows to download.";
+      "Cached members have no dashboard ticket rows to export. Refresh metrics after changing filters, or confirm members have matching tickets.";
     return;
   }
 
@@ -1820,12 +1796,12 @@ document.getElementById("teamExportAllBtn").addEventListener("click", async () =
   a.remove();
   URL.revokeObjectURL(url);
 
-  const refetchedOk = missingMembers.length - failedMembers.length;
   const statusParts = [
-    `Team CSV export downloaded (${allRows.length} rows).`,
-    missingMembers.length ? `Refetched ${refetchedOk}/${missingMembers.length} missing member(s).` : "Used cached member(s) only.",
-    failedMembers.length ? `${failedMembers.length} member(s) failed and were skipped.` : "",
-  ].filter(Boolean);
+    `Team CSV downloaded (${allRows.length} rows) from cached data only — no server request.`,
+    missingMembers.length
+      ? `Not in cache (skipped): ${missingMembers.map((m) => m.name || m.username).join(", ")}. Use Refresh All Member Metrics to cache them.`
+      : "All roster members were included.",
+  ];
   document.getElementById("teamStatusSummary").textContent = statusParts.join(" ");
 });
 
