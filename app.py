@@ -724,11 +724,21 @@ HTML = """
             <h2>Team Member Ticket Posture</h2>
             <p class="small">Click a team member to load stand-up and EOD posture metrics.</p>
             <p id="teamReportPeriod" class="small" style="margin-top:8px;color:var(--muted);">Report period: set Start and End in Team Posture settings.</p>
+            <p id="teamRollupNote" class="small" style="margin-top:8px;color:var(--muted);"></p>
           </div>
+        </div>
+        <div id="teamRollupGrid" class="team-grid" style="margin-bottom:12px;">
+          <div class="team-metric-card" title="Sum of Queue Backlog counts across team members with cached data: CSSD tickets in Under QA Analysis plus CSD tickets in New. Other projects are excluded per member."><div class="label">Team Queue Backlog</div><div id="teamRollupQueueBacklog" class="value">--</div></div>
+          <div class="team-metric-card" title="Sum of In Progress counts across cached members: open CSSD tickets not in New or Under QA Analysis, and open CSD tickets not in New."><div class="label">Team In Progress</div><div id="teamRollupInProgress" class="value">--</div></div>
+          <div class="team-metric-card" title="Sum of Resolved in Period counts across cached members: owned tickets whose resolution time falls between Team Start and End (created-date query window)."><div class="label">Team Resolved (Period)</div><div id="teamRollupResolvedPeriod" class="value">--</div></div>
         </div>
         <div id="teamMemberGrid" class="member-grid"></div>
         <div id="teamMetricsGrid" class="team-grid">
           <div class="team-metric-card" title="Open tickets tied to this member as assignee or CSD Assigned Developer when configured. Done means Closed on CSSD and Ready For Production Users on CSD."><div class="label">Assigned Open Tickets</div><div id="teamOpenCount" class="value">--</div></div>
+          <div class="team-metric-card" title="CSSD: Under QA Analysis. CSD: New. Other projects: not counted. Uses ownership rules for this member."><div class="label">Queue Backlog</div><div id="teamQueueBacklogCount" class="value">--</div></div>
+          <div class="team-metric-card" title="CSSD: open, not New, not Under QA Analysis. CSD: open and not New. Other projects: not counted."><div class="label">In Progress</div><div id="teamInProgressCount" class="value">--</div></div>
+          <div class="team-metric-card" title="Tickets you own where you authored a Jira status change in the changelog within the last eight hours from when this report ran. Requires changelog data from Jira."><div class="label">Worked Status (Last 8 Hours)</div><div id="teamWorkedStatusLast8hCount" class="value">--</div></div>
+          <div class="team-metric-card" title="Owned tickets counted as resolved or finished whose resolution date falls between Team Start and End in settings (same window as created-date JQL)."><div class="label">Resolved (Report Period)</div><div id="teamResolvedPeriodCount" class="value">--</div></div>
           <div class="team-metric-card" title="Tickets in the date window whose status sounds reopened, where the member owns the ticket or authored at least one status change."><div class="label">Reopened Tickets</div><div id="teamReopenedCount" class="value">--</div></div>
           <div class="team-metric-card" title="Tickets assigned to this member whose status looks finished, such as resolved, closed, completed, or duplicate."><div class="label">Resolved (Owned)</div><div id="teamResolvedOwnedCount" class="value">--</div></div>
           <div class="team-metric-card" title="Finished tickets owned by someone else where this member changed the status at least once."><div class="label">Resolved (Contributed)</div><div id="teamResolvedContributedCount" class="value">--</div></div>
@@ -1216,6 +1226,48 @@ function teamFormToObject() {
   return obj;
 }
 
+function updateTeamRollupHeader() {
+  const qEl = document.getElementById("teamRollupQueueBacklog");
+  const pEl = document.getElementById("teamRollupInProgress");
+  const rEl = document.getElementById("teamRollupResolvedPeriod");
+  const noteEl = document.getElementById("teamRollupNote");
+  if (!qEl || !pEl || !rEl) return;
+  if (!teamMembers.length) {
+    qEl.textContent = "--";
+    pEl.textContent = "--";
+    rEl.textContent = "--";
+    if (noteEl) noteEl.textContent = "";
+    return;
+  }
+  let qb = 0;
+  let ip = 0;
+  let rs = 0;
+  let cached = 0;
+  for (const m of teamMembers) {
+    const pl = teamPayloadByMemberId[m.id];
+    if (!pl || !pl.metrics) continue;
+    cached += 1;
+    qb += Number(pl.metrics.queue_backlog_count ?? 0);
+    ip += Number(pl.metrics.in_progress_count ?? 0);
+    rs += Number(pl.metrics.resolved_in_period_count ?? 0);
+  }
+  if (cached === 0) {
+    qEl.textContent = "--";
+    pEl.textContent = "--";
+    rEl.textContent = "--";
+    if (noteEl) noteEl.textContent = "Refresh members to load team totals.";
+    return;
+  }
+  qEl.textContent = String(qb);
+  pEl.textContent = String(ip);
+  rEl.textContent = String(rs);
+  if (noteEl) {
+    noteEl.textContent = cached < teamMembers.length
+      ? `Team totals include ${cached}/${teamMembers.length} members with cached data. Run Refresh All Member Metrics for the full roster.`
+      : "";
+  }
+}
+
 function renderTeamPostureMetrics(payload) {
   const metrics = payload.metrics || {};
   const oldest = payload.oldest_open || {};
@@ -1224,6 +1276,14 @@ function renderTeamPostureMetrics(payload) {
   document.getElementById("teamResolvedContributedCount").textContent = String(metrics.resolved_contributed_count ?? 0);
   document.getElementById("teamResolvedLast8hCount").textContent = String(metrics.resolved_last_8h_count ?? 0);
   document.getElementById("teamOpenCount").textContent = String(metrics.assigned_open_count ?? 0);
+  const qbEl = document.getElementById("teamQueueBacklogCount");
+  const ipEl = document.getElementById("teamInProgressCount");
+  const wsEl = document.getElementById("teamWorkedStatusLast8hCount");
+  const rpEl = document.getElementById("teamResolvedPeriodCount");
+  if (qbEl) qbEl.textContent = String(metrics.queue_backlog_count ?? 0);
+  if (ipEl) ipEl.textContent = String(metrics.in_progress_count ?? 0);
+  if (wsEl) wsEl.textContent = String(metrics.worked_status_last_8h_count ?? 0);
+  if (rpEl) rpEl.textContent = String(metrics.resolved_in_period_count ?? 0);
   document.getElementById("teamReopenedCount").textContent = String(metrics.reopened_count ?? 0);
   document.getElementById("teamWorkedOtherCount").textContent = String(metrics.worked_on_assigned_others_count ?? 0);
   document.getElementById("teamSlaBreachCount").textContent = String(metrics.sla_breach_count ?? 0);
@@ -1239,6 +1299,7 @@ function renderTeamPostureMetrics(payload) {
   document.getElementById("teamOldestDetail").textContent = JSON.stringify(oldest || {}, null, 2);
   renderTeamLabelsChart(payload.label_distribution || {});
   renderTeamCsvPreview(payload.raw_rows || []);
+  updateTeamRollupHeader();
 }
 
 function renderTeamLabelsChart(labelDistribution) {
@@ -1358,6 +1419,7 @@ async function refreshAllTeamMembers() {
     document.getElementById("teamStatusSummary").textContent = `No member data loaded (${successCount}/${teamMembers.length} successful).`;
   }
   updateTeamReportPeriodLabel();
+  updateTeamRollupHeader();
 }
 
 function formatReportDatetimeLocal(value) {
@@ -1714,6 +1776,7 @@ document.getElementById("teamAddMemberBtn").addEventListener("click", () => {
   nameInput.value = "";
   usernameInput.value = "";
   renderTeamMemberIcons();
+  updateTeamRollupHeader();
 });
 
 document.getElementById("teamRemoveMemberBtn").addEventListener("click", () => {
@@ -1727,6 +1790,7 @@ document.getElementById("teamRemoveMemberBtn").addEventListener("click", () => {
   saveTeamMembersToStorage(teamMembers);
   teamPayloadByMemberId = {};
   renderTeamMemberIcons();
+  updateTeamRollupHeader();
 });
 
 function openTeamExport(kind) {
@@ -1836,6 +1900,7 @@ activeTeamMemberId = teamMembers[0] ? teamMembers[0].id : null;
 renderTeamMemberIcons();
 updateTeamReportPeriodLabel();
 updateLegacyReportPeriodLabel();
+updateTeamRollupHeader();
 
 renderCsmsKpis({
   backlog: { period2: "--", trend: 0 },
@@ -3125,6 +3190,139 @@ def get_open_issues(issues: List[Dict[str, Any]], project_rules: Dict[str, str])
     return open_issues
 
 
+def parse_team_form_datetime(value: Optional[str]) -> Optional[datetime]:
+    """Parse datetime-local style strings from Team Posture form for report-window comparisons."""
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            dt = datetime.strptime(text[:16], "%Y-%m-%dT%H:%M")
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+    return dt
+
+
+def is_issue_open_for_project(issue: Dict[str, Any], project_rules: Dict[str, str]) -> bool:
+    project_key = get_issue_project_key(issue)
+    status = (get_issue_status(issue) or "").strip().lower()
+    final_status = get_project_final_status(project_key, project_rules).strip().lower()
+    return status != final_status
+
+
+def is_queue_backlog_issue(issue: Dict[str, Any], project_rules: Dict[str, str]) -> bool:
+    """CSSD: Under QA Analysis. CSD: New. Other projects: not counted."""
+    project_key = get_issue_project_key(issue)
+    status = (get_issue_status(issue) or "").strip().lower()
+    if project_key == "CSSD":
+        return "under qa analysis" in status
+    if project_key == "CSD":
+        return status == "new"
+    return False
+
+
+def is_in_progress_issue(issue: Dict[str, Any], project_rules: Dict[str, str]) -> bool:
+    """
+    CSSD: open, not New, not Under QA Analysis.
+    CSD: open, not New.
+    Other projects: not counted.
+    """
+    project_key = get_issue_project_key(issue)
+    if project_key not in ("CSSD", "CSD"):
+        return False
+    if not is_issue_open_for_project(issue, project_rules):
+        return False
+    status = (get_issue_status(issue) or "").strip().lower()
+    if project_key == "CSSD":
+        if status == "new":
+            return False
+        if "under qa analysis" in status:
+            return False
+        return True
+    if project_key == "CSD":
+        return status != "new"
+    return False
+
+
+def count_owned_queue_backlog(owned_issues: List[Dict[str, Any]], project_rules: Dict[str, str]) -> int:
+    return sum(1 for issue in owned_issues if is_queue_backlog_issue(issue, project_rules))
+
+
+def count_owned_in_progress(owned_issues: List[Dict[str, Any]], project_rules: Dict[str, str]) -> int:
+    return sum(1 for issue in owned_issues if is_in_progress_issue(issue, project_rules))
+
+
+def issue_has_member_status_change_after(
+    issue: Dict[str, Any], assignee_username: str, cutoff_utc: datetime
+) -> bool:
+    """True if the member authored a status transition in changelog at or after cutoff (UTC)."""
+    target = (assignee_username or "").strip().lower()
+    if not target:
+        return False
+    histories = ((issue.get("changelog") or {}).get("histories") or [])
+    for history in histories:
+        change_dt = parse_jira_datetime(history.get("created") or "")
+        if not change_dt:
+            continue
+        change_dt = _as_utc(change_dt)
+        if change_dt < cutoff_utc:
+            continue
+        author = history.get("author") or {}
+        if not user_matches_username(author, target):
+            continue
+        for item in history.get("items", []):
+            if (item.get("field") or "").lower() == "status":
+                return True
+    return False
+
+
+def count_owned_status_changes_in_last_hours(
+    owned_issues: List[Dict[str, Any]], assignee_username: str, hours: float = 8.0
+) -> int:
+    """Distinct owned issues with a status changelog entry authored by the member in the last `hours`."""
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=hours)
+    n = 0
+    for issue in owned_issues:
+        if issue_has_member_status_change_after(issue, assignee_username, cutoff):
+            n += 1
+    return n
+
+
+def count_owned_resolved_in_report_window(
+    owned_issues: List[Dict[str, Any]],
+    keywords: Tuple[str, ...],
+    start_dt: Optional[datetime],
+    end_dt: Optional[datetime],
+) -> int:
+    """Owned tickets in resolved-like status whose resolutiondate falls in [start_dt, end_dt] (inclusive)."""
+    if start_dt is None and end_dt is None:
+        return 0
+    start_utc = _as_utc(start_dt) if start_dt else None
+    end_utc = _as_utc(end_dt) if end_dt else None
+    n = 0
+    for issue in owned_issues:
+        if not issue_status_matches_keywords(issue, keywords):
+            continue
+        fields = issue.get("fields", {}) or {}
+        resolved_dt = parse_jira_datetime(fields.get("resolutiondate") or "")
+        if not resolved_dt:
+            continue
+        resolved_dt = _as_utc(resolved_dt)
+        if start_utc is not None and resolved_dt < start_utc:
+            continue
+        if end_utc is not None and resolved_dt > end_utc:
+            continue
+        n += 1
+    return n
+
+
 def compute_sla_metrics(
     issues: List[Dict[str, Any]],
     project_rules: Dict[str, str],
@@ -3395,6 +3593,19 @@ def build_team_posture_payload(params: Dict[str, Any]) -> Dict[str, Any]:
     resolved_last_8h_count = count_owned_resolved_in_last_hours(
         owned_issues, TEAM_POSTURE_RESOLVED_STATUS_KEYWORDS, hours=8.0
     )
+    report_start = parse_team_form_datetime(params.get("start_dt"))
+    report_end = parse_team_form_datetime(params.get("end_dt"))
+    queue_backlog_count = count_owned_queue_backlog(owned_issues, project_rules)
+    in_progress_count = count_owned_in_progress(owned_issues, project_rules)
+    worked_status_last_8h_count = count_owned_status_changes_in_last_hours(
+        owned_issues, assignee_username, hours=8.0
+    )
+    resolved_in_period_count = count_owned_resolved_in_report_window(
+        owned_issues,
+        TEAM_POSTURE_RESOLVED_STATUS_KEYWORDS,
+        report_start,
+        report_end,
+    )
     raw_rows = build_member_dashboard_tagged_rows(
         broad_issues,
         assignee_username,
@@ -3417,6 +3628,10 @@ def build_team_posture_payload(params: Dict[str, Any]) -> Dict[str, Any]:
             "reopened_count": reopened_count,
             "worked_on_assigned_others_count": worked_on_assigned_others_count,
             "resolved_last_8h_count": resolved_last_8h_count,
+            "queue_backlog_count": queue_backlog_count,
+            "in_progress_count": in_progress_count,
+            "worked_status_last_8h_count": worked_status_last_8h_count,
+            "resolved_in_period_count": resolved_in_period_count,
             "sla_breach_count": sla_metrics["sla_breach_count"],
             "open_near_sla_breach_8h_count": sla_metrics["open_near_sla_breach_8h_count"],
         },
@@ -3631,6 +3846,10 @@ def run_team_posture():
             {"Metric": "Resolved (Owned)", "Value": mets.get("resolved_owned_count", mets.get("resolved_count", 0))},
             {"Metric": "Resolved (Contributed)", "Value": mets.get("resolved_contributed_count", 0)},
             {"Metric": "Resolved (Last 8 Hours)", "Value": mets.get("resolved_last_8h_count", 0)},
+            {"Metric": "Queue Backlog", "Value": mets.get("queue_backlog_count", 0)},
+            {"Metric": "In Progress", "Value": mets.get("in_progress_count", 0)},
+            {"Metric": "Worked Status (Last 8 Hours)", "Value": mets.get("worked_status_last_8h_count", 0)},
+            {"Metric": "Resolved (Report Period)", "Value": mets.get("resolved_in_period_count", 0)},
             {"Metric": "Assigned Open Tickets", "Value": payload["metrics"]["assigned_open_count"]},
             {"Metric": "Reopened Tickets", "Value": payload["metrics"]["reopened_count"]},
             {"Metric": "Worked On (Assigned to Others)", "Value": payload["metrics"]["worked_on_assigned_others_count"]},
