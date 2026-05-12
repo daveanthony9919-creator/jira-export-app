@@ -730,7 +730,7 @@ HTML = """
         <div id="teamRollupGrid" class="team-grid" style="margin-bottom:12px;">
           <div class="team-metric-card" title="Sum of Queue Backlog counts across team members with cached data: CSSD tickets in Under QA Analysis plus CSD tickets in New. Other projects are excluded per member."><div class="label">Team Queue Backlog</div><div id="teamRollupQueueBacklog" class="value">--</div></div>
           <div class="team-metric-card" title="Sum of In Progress counts across cached members: open CSSD tickets not in New or Under QA Analysis, and open CSD tickets not in New."><div class="label">Team In Progress</div><div id="teamRollupInProgress" class="value">--</div></div>
-          <div class="team-metric-card" title="Sum across cached members: owned tickets in resolved-like status whose resolution time falls between Team Start and End."><div class="label">Team Resolved (Period)</div><div id="teamRollupResolvedPeriod" class="value">--</div></div>
+          <div class="team-metric-card" title="Sum across cached members: owned tickets in resolved-like status whose resolution time falls between Team Start and End."><div class="label">Team Resolved (Report Period)</div><div id="teamRollupResolvedPeriod" class="value">--</div></div>
         </div>
         <div id="teamMemberGrid" class="member-grid"></div>
         <div id="teamMetricsGrid" class="team-grid">
