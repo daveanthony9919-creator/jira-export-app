@@ -730,7 +730,7 @@ HTML = """
         <div id="teamRollupGrid" class="team-grid" style="margin-bottom:12px;">
           <div class="team-metric-card" title="Sum of Queue Backlog counts across team members with cached data: CSSD tickets in Under QA Analysis plus CSD tickets in New. Other projects are excluded per member."><div class="label">Team Queue Backlog</div><div id="teamRollupQueueBacklog" class="value">--</div></div>
           <div class="team-metric-card" title="Sum of In Progress counts across cached members: open CSSD tickets not in New or Under QA Analysis, and open CSD tickets not in New."><div class="label">Team In Progress</div><div id="teamRollupInProgress" class="value">--</div></div>
-          <div class="team-metric-card" title="Sum of Resolved in Period counts across cached members: owned tickets whose resolution time falls between Team Start and End (created-date query window)."><div class="label">Team Resolved (Period)</div><div id="teamRollupResolvedPeriod" class="value">--</div></div>
+          <div class="team-metric-card" title="Sum across cached members: owned tickets in resolved-like status whose resolution time falls between Team Start and End."><div class="label">Team Resolved (Period)</div><div id="teamRollupResolvedPeriod" class="value">--</div></div>
         </div>
         <div id="teamMemberGrid" class="member-grid"></div>
         <div id="teamMetricsGrid" class="team-grid">
@@ -738,7 +738,6 @@ HTML = """
           <div class="team-metric-card" title="CSSD: Under QA Analysis. CSD: New. Other projects: not counted. Uses ownership rules for this member."><div class="label">Queue Backlog</div><div id="teamQueueBacklogCount" class="value">--</div></div>
           <div class="team-metric-card" title="CSSD: open, not New, not Under QA Analysis. CSD: open and not New. Other projects: not counted."><div class="label">In Progress</div><div id="teamInProgressCount" class="value">--</div></div>
           <div class="team-metric-card" title="Tickets you own where you authored a Jira status change in the changelog within the last eight hours from when this report ran. Requires changelog data from Jira."><div class="label">Worked Status (Last 8 Hours)</div><div id="teamWorkedStatusLast8hCount" class="value">--</div></div>
-          <div class="team-metric-card" title="Owned tickets counted as resolved or finished whose resolution date falls between Team Start and End in settings (same window as created-date JQL)."><div class="label">Resolved (Report Period)</div><div id="teamResolvedPeriodCount" class="value">--</div></div>
           <div class="team-metric-card" title="Tickets in the date window whose status sounds reopened, where the member owns the ticket or authored at least one status change."><div class="label">Reopened Tickets</div><div id="teamReopenedCount" class="value">--</div></div>
           <div class="team-metric-card" title="Tickets assigned to this member whose status looks finished, such as resolved, closed, completed, or duplicate."><div class="label">Resolved (Owned)</div><div id="teamResolvedOwnedCount" class="value">--</div></div>
           <div class="team-metric-card" title="Finished tickets owned by someone else where this member changed the status at least once."><div class="label">Resolved (Contributed)</div><div id="teamResolvedContributedCount" class="value">--</div></div>
@@ -1279,11 +1278,9 @@ function renderTeamPostureMetrics(payload) {
   const qbEl = document.getElementById("teamQueueBacklogCount");
   const ipEl = document.getElementById("teamInProgressCount");
   const wsEl = document.getElementById("teamWorkedStatusLast8hCount");
-  const rpEl = document.getElementById("teamResolvedPeriodCount");
   if (qbEl) qbEl.textContent = String(metrics.queue_backlog_count ?? 0);
   if (ipEl) ipEl.textContent = String(metrics.in_progress_count ?? 0);
   if (wsEl) wsEl.textContent = String(metrics.worked_status_last_8h_count ?? 0);
-  if (rpEl) rpEl.textContent = String(metrics.resolved_in_period_count ?? 0);
   document.getElementById("teamReopenedCount").textContent = String(metrics.reopened_count ?? 0);
   document.getElementById("teamWorkedOtherCount").textContent = String(metrics.worked_on_assigned_others_count ?? 0);
   document.getElementById("teamSlaBreachCount").textContent = String(metrics.sla_breach_count ?? 0);
@@ -3190,25 +3187,6 @@ def get_open_issues(issues: List[Dict[str, Any]], project_rules: Dict[str, str])
     return open_issues
 
 
-def parse_team_form_datetime(value: Optional[str]) -> Optional[datetime]:
-    """Parse datetime-local style strings from Team Posture form for report-window comparisons."""
-    if not value:
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    try:
-        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        try:
-            dt = datetime.strptime(text[:16], "%Y-%m-%dT%H:%M")
-        except ValueError:
-            return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
-    return dt
-
-
 def is_issue_open_for_project(issue: Dict[str, Any], project_rules: Dict[str, str]) -> bool:
     project_key = get_issue_project_key(issue)
     status = (get_issue_status(issue) or "").strip().lower()
@@ -3293,6 +3271,25 @@ def count_owned_status_changes_in_last_hours(
         if issue_has_member_status_change_after(issue, assignee_username, cutoff):
             n += 1
     return n
+
+
+def parse_team_form_datetime(value: Optional[str]) -> Optional[datetime]:
+    """Parse datetime-local style strings from Team Posture form for report-window comparisons."""
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            dt = datetime.strptime(text[:16], "%Y-%m-%dT%H:%M")
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+    return dt
 
 
 def count_owned_resolved_in_report_window(
