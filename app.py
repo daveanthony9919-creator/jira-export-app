@@ -738,6 +738,7 @@ HTML = """
           <div class="team-metric-card" title="CSSD: Under QA Analysis. CSD: New. Other projects: not counted. Uses ownership rules for this member."><div class="label">Queue Backlog</div><div id="teamQueueBacklogCount" class="value">--</div></div>
           <div class="team-metric-card" title="CSSD: open, not New, not Under QA Analysis. CSD: open and not New. Other projects: not counted."><div class="label">In Progress</div><div id="teamInProgressCount" class="value">--</div></div>
           <div class="team-metric-card" title="Tickets you own where you authored a Jira status change in the changelog within the last eight hours from when this report ran. Requires changelog data from Jira."><div class="label">Worked Status (Last 8 Hours)</div><div id="teamWorkedStatusLast8hCount" class="value">--</div></div>
+          <div class="team-metric-card" title="Tickets owned by someone else under the same ownership rules as Worked On (Assigned to Others), where you authored a status change in the changelog within the last eight hours. Requires changelog data from Jira."><div class="label">Worked Status (Others, Last 8 Hours)</div><div id="teamWorkedStatusOthersLast8hCount" class="value">--</div></div>
           <div class="team-metric-card" title="Tickets in the date window whose status sounds reopened, where the member owns the ticket or authored at least one status change."><div class="label">Reopened Tickets</div><div id="teamReopenedCount" class="value">--</div></div>
           <div class="team-metric-card" title="Tickets assigned to this member whose status looks finished, such as resolved, closed, completed, or duplicate."><div class="label">Resolved (Owned)</div><div id="teamResolvedOwnedCount" class="value">--</div></div>
           <div class="team-metric-card" title="Finished tickets owned by someone else where this member changed the status at least once."><div class="label">Resolved (Contributed)</div><div id="teamResolvedContributedCount" class="value">--</div></div>
@@ -1278,9 +1279,11 @@ function renderTeamPostureMetrics(payload) {
   const qbEl = document.getElementById("teamQueueBacklogCount");
   const ipEl = document.getElementById("teamInProgressCount");
   const wsEl = document.getElementById("teamWorkedStatusLast8hCount");
+  const wsoEl = document.getElementById("teamWorkedStatusOthersLast8hCount");
   if (qbEl) qbEl.textContent = String(metrics.queue_backlog_count ?? 0);
   if (ipEl) ipEl.textContent = String(metrics.in_progress_count ?? 0);
   if (wsEl) wsEl.textContent = String(metrics.worked_status_last_8h_count ?? 0);
+  if (wsoEl) wsoEl.textContent = String(metrics.worked_status_last_8h_assigned_others_count ?? 0);
   document.getElementById("teamReopenedCount").textContent = String(metrics.reopened_count ?? 0);
   document.getElementById("teamWorkedOtherCount").textContent = String(metrics.worked_on_assigned_others_count ?? 0);
   document.getElementById("teamSlaBreachCount").textContent = String(metrics.sla_breach_count ?? 0);
@@ -3388,6 +3391,27 @@ def count_worked_on_assigned_to_others(issues: List[Dict[str, Any]], assignee_us
     return count
 
 
+def count_worked_status_last_8h_assigned_to_others(
+    broad_issues: List[Dict[str, Any]],
+    assignee_username: str,
+    csd_assigned_dev_field: str,
+    hours: float = 8.0,
+) -> int:
+    """Tickets not owned by the member where they authored a status changelog entry in the last `hours`."""
+    target = (assignee_username or "").strip().lower()
+    if not target:
+        return 0
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=hours)
+    n = 0
+    for issue in broad_issues:
+        if issue_owner_username(issue, csd_assigned_dev_field) == target:
+            continue
+        if issue_has_member_status_change_after(issue, assignee_username, cutoff):
+            n += 1
+    return n
+
+
 def count_owned_resolved_in_last_hours(
     owned_issues: List[Dict[str, Any]],
     keywords: Tuple[str, ...],
@@ -3597,6 +3621,9 @@ def build_team_posture_payload(params: Dict[str, Any]) -> Dict[str, Any]:
     worked_status_last_8h_count = count_owned_status_changes_in_last_hours(
         owned_issues, assignee_username, hours=8.0
     )
+    worked_status_last_8h_assigned_others_count = count_worked_status_last_8h_assigned_to_others(
+        broad_issues, assignee_username, csd_assigned_dev_field, hours=8.0
+    )
     resolved_in_period_count = count_owned_resolved_in_report_window(
         owned_issues,
         TEAM_POSTURE_RESOLVED_STATUS_KEYWORDS,
@@ -3628,6 +3655,7 @@ def build_team_posture_payload(params: Dict[str, Any]) -> Dict[str, Any]:
             "queue_backlog_count": queue_backlog_count,
             "in_progress_count": in_progress_count,
             "worked_status_last_8h_count": worked_status_last_8h_count,
+            "worked_status_last_8h_assigned_others_count": worked_status_last_8h_assigned_others_count,
             "resolved_in_period_count": resolved_in_period_count,
             "sla_breach_count": sla_metrics["sla_breach_count"],
             "open_near_sla_breach_8h_count": sla_metrics["open_near_sla_breach_8h_count"],
@@ -3846,6 +3874,7 @@ def run_team_posture():
             {"Metric": "Queue Backlog", "Value": mets.get("queue_backlog_count", 0)},
             {"Metric": "In Progress", "Value": mets.get("in_progress_count", 0)},
             {"Metric": "Worked Status (Last 8 Hours)", "Value": mets.get("worked_status_last_8h_count", 0)},
+            {"Metric": "Worked Status (Others, Last 8 Hours)", "Value": mets.get("worked_status_last_8h_assigned_others_count", 0)},
             {"Metric": "Resolved (Report Period)", "Value": mets.get("resolved_in_period_count", 0)},
             {"Metric": "Assigned Open Tickets", "Value": payload["metrics"]["assigned_open_count"]},
             {"Metric": "Reopened Tickets", "Value": payload["metrics"]["reopened_count"]},
