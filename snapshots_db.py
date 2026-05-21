@@ -229,6 +229,16 @@ def list_snapshot_options(report_id: str) -> Dict[str, Any]:
     return {"report_id": report_id, "latest_id": latest_id, "suggested_cadence": cadence, "options": options}
 
 
+def _coerce_metric_float(value: Any) -> Optional[float]:
+    """Convert a metric value to float; None and invalid values mean metric unavailable."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _get_metric_value(
     metrics: Dict[str, Any],
     metric_key: str,
@@ -245,15 +255,15 @@ def _get_metric_value(
                 continue
             vals = m.get("metrics") or m
             if metric_key in vals:
-                return float(vals[metric_key])
+                return _coerce_metric_float(vals[metric_key])
             return None
         return None
     board = metrics.get("trend", {}).get("board") or metrics.get("view", {}).get("board") or {}
     if metric_key in board:
-        return float(board[metric_key])
+        return _coerce_metric_float(board[metric_key])
     trend = metrics.get("trend") or {}
     if metric_key in trend:
-        return float(trend[metric_key])
+        return _coerce_metric_float(trend[metric_key])
     return None
 
 
@@ -432,11 +442,11 @@ def _live_metric_value(
                 continue
             metrics = m.get("metrics") or {}
             if metric_key in metrics:
-                return float(metrics[metric_key])
+                return _coerce_metric_float(metrics[metric_key])
         return None
     board = live_metrics.get("board") or live_metrics
     if metric_key in board:
-        return float(board[metric_key])
+        return _coerce_metric_float(board[metric_key])
     return None
 
 

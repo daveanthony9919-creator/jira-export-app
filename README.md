@@ -36,7 +36,7 @@ Default dev URL: `http://127.0.0.1:5001`
 | `GET` | `/download?path=...` | Legacy export file download (server-side path). |
 | `GET` | `/download-csms-export?export_id=&kind=` | Cached CSMS export (`csv_zip`, `excel`, `pdf`). |
 | `GET` | `/download-team-posture-export?export_id=&kind=` | Cached team export (`csv`, `excel`). |
-| `POST` | `/run-team-board-metrics` | Board-level metrics (e.g. **Pipeline Backlog** — unassigned CSSD Under QA Analysis + unassigned CSD New). |
+| `POST` | `/run-team-board-metrics` | Board-level metrics: **Pipeline Backlog** (CSMS Prod JQL) and **Team Closed** (separate query). |
 | `GET` | `/snapshots/list-options?report_id=` | Dropdown options for official saved reports (`exec`, `ops`, `legacy`). |
 | `GET` | `/snapshots/<id>/display` | Hydrate dashboard from a saved snapshot (no Jira). |
 | `POST` | `/snapshots` | Manually save an official report snapshot. |
@@ -54,7 +54,7 @@ SQLite database (stdlib only) stores **manually saved** dashboard runs. Refreshi
 - **Archive mode:** On tab open, the latest official snapshot loads so KPIs/cards work without Jira.
 - **Report dropdown:** Select any past save or switch to **Live** to refresh from Jira.
 - **Operations Team cards:** Each metric card shows a delta vs the prior official report (or manual baseline) and a sparkline over saved runs.
-- **Pipeline Backlog:** Board card counts tickets in CSSD **Under QA Analysis** or CSD **New** with **no assignee** (distinct from per-member Queue Backlog).
+- **Pipeline Backlog:** Uses the **CSMS Prod pipeline JQL** (default: project CSMS Defect Management, Phase Reported = Prod, status in New / In Progress / Reopened, issue-type and label exclusions, `created >=` configurable date default 2021-11-08). Override via **Pipeline Backlog JQL** in Team settings. Count = issues returned by that JQL. **Team Closed** uses a separate project/issue-type query.
 
 Backup `jira_export_app/data/snapshots.db` with the app folder. The file is gitignored by default.
 

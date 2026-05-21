@@ -42,6 +42,17 @@ TEAM_POSTURE_RESOLVED_STATUS_KEYWORDS: Tuple[str, ...] = (
 # Operations board: CSSD/CSD only, status must be Closed (exact name, case-insensitive).
 TEAM_OPS_CLOSED_PROJECT_KEYS: Tuple[str, ...] = ("CSSD", "CSD")
 
+# Default Pipeline Backlog JQL (matches Jira UI filter: Prod phase, early statuses, type/label exclusions).
+TEAM_PIPELINE_BACKLOG_JQL_DEFAULT = (
+    'project = "CSMS Defect Management" AND "Phase Reported" = Prod '
+    'AND created >= "{created_since}" '
+    'AND status in (New, "In Progress", Reopened) '
+    'AND issuetype not in (Enhancement, "Enhancement Request", Story, Gap) '
+    "AND (labels is EMPTY OR labels not in (Enhancement)) "
+    "ORDER BY created ASC"
+)
+TEAM_PIPELINE_BACKLOG_CREATED_SINCE_DEFAULT = "2021-11-08"
+
 # Default Team tab roster when localStorage has no saved members.
 # "username" is the JQL assignee literal passed through assignee in ("...") (see build_team_posture_jql / jql_quote).
 # Use the same token your Jira accepts in Issue Navigator; swap for accountId or legacy username if needed.
@@ -890,7 +901,7 @@ HTML = """
           </div>
         </div>
         <div id="teamRollupGrid" class="team-grid" style="margin-bottom:12px;">
-          <div class="team-metric-card has-spark" data-metric-scope="board" data-metric-key="pipeline_backlog_count" title="Unassigned pipeline queue: CSSD in Under QA Analysis, CSD in New. Not owned by a team member."><div class="label">Pipeline Backlog</div><div id="teamPipelineBacklogCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="board" data-metric-key="pipeline_backlog_count" title="CSSD Prod defects in New, In Progress, or Reopened (Phase Reported = Prod, issue-type and label exclusions). Uses Pipeline Backlog JQL in Team settings."><div class="label">Pipeline Backlog</div><div id="teamPipelineBacklogCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
           <div class="team-metric-card has-spark" data-metric-scope="board" data-metric-key="queue_backlog_count" title="Sum of Queue Backlog counts across team members with cached data: CSSD tickets in Under QA Analysis plus CSD tickets in New. Other projects are excluded per member."><div class="label">Team Queue Backlog</div><div id="teamRollupQueueBacklog" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
           <div class="team-metric-card has-spark" data-metric-scope="board" data-metric-key="in_progress_count" title="Sum of In Progress counts across cached members: open CSSD tickets not in New or Under QA Analysis, and open CSD tickets not in New."><div class="label">Team In Progress</div><div id="teamRollupInProgress" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
           <div class="team-metric-card has-spark" data-metric-scope="board" data-metric-key="resolved_in_period_count" title="Sum across cached members: owned tickets in resolved-like status whose resolution time falls between Team Start and End."><div class="label">Team Resolved (Report Period)</div><div id="teamRollupResolvedPeriod" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
@@ -944,6 +955,11 @@ HTML = """
             <div class="field"><label>CSD Assigned Developer Field Key</label><input name="csd_assigned_dev_field" value="customfield_14700" placeholder="customfield_12345" /></div>
             <div class="field"><label>Page Size</label><input type="number" name="page_size" value="50" min="1" max="100" /></div>
             <div class="field"><label>Max Issues (0 = all)</label><input type="number" name="max_issues" value="0" min="0" /></div>
+            <div class="field"><label>Pipeline Backlog Created Since</label><input type="date" name="pipeline_backlog_created_since" value="2021-11-08" title="Used in default Pipeline Backlog JQL as created &gt;= this date." /></div>
+            <div class="field full">
+              <label>Pipeline Backlog JQL (optional override)</label>
+              <textarea name="pipeline_backlog_jql" rows="4" placeholder="Leave blank to use the default CSMS Prod filter (New / In Progress / Reopened)."></textarea>
+            </div>
             <div class="field full">
               <div class="row">
                 <label class="check"><input type="checkbox" name="verify_ssl" checked /> Verify SSL</label>
@@ -1313,6 +1329,8 @@ let teamCharts = { labels: null };
 let latestCsmsPayload = null;
 let latestLegacyPayload = null;
 let latestBoardMetrics = {};
+let latestBoardMetricsLoaded = false;
+let boardMetricsRefreshInFlight = null;
 let teamMembers = [];
 let activeTeamMemberId = null;
 let latestTeamPosturePayload = null;
@@ -1365,7 +1383,10 @@ function renderTeamMemberIcons() {
       if (cached) {
         latestTeamPosturePayload = cached;
         renderTeamPostureMetrics(cached);
-        if (snapshotViewMode.team === "live") refreshOpsMetricTrends(null, "live");
+        if (snapshotViewMode.team === "live") {
+          refreshOpsMetricTrends(null, "live");
+          void ensureTeamBoardMetrics();
+        }
       } else {
         refreshTeamPosture();
       }
@@ -1391,8 +1412,12 @@ function teamFormToObject() {
 
 function buildOpsBoardRollupFromCache() {
   const board = {
-    pipeline_backlog_count: Number(latestBoardMetrics.pipeline_backlog_count ?? 0),
-    closed_cssd_csd_team_count: Number(latestBoardMetrics.closed_cssd_csd_team_count ?? 0),
+    pipeline_backlog_count: latestBoardMetricsLoaded
+      ? Number(latestBoardMetrics.pipeline_backlog_count ?? 0)
+      : null,
+    closed_cssd_csd_team_count: latestBoardMetricsLoaded
+      ? Number(latestBoardMetrics.closed_cssd_csd_team_count ?? 0)
+      : null,
     queue_backlog_count: 0,
     in_progress_count: 0,
     resolved_in_period_count: 0,
@@ -1410,7 +1435,7 @@ function buildOpsBoardRollupFromCache() {
     board.sla_breach_count += Number(pl.metrics.sla_breach_count ?? 0);
     board.open_near_sla_breach_8h_count += Number(pl.metrics.open_near_sla_breach_8h_count ?? 0);
   }
-  if (latestBoardMetrics.closed_cssd_csd_team_count == null && cached > 0) {
+  if (!latestBoardMetricsLoaded && cached > 0) {
     board.closed_cssd_csd_team_count = teamMembers.reduce((sum, m) => {
       const pl = teamPayloadByMemberId[m.id];
       return sum + Number(pl?.metrics?.closed_cssd_csd_count ?? 0);
@@ -1448,7 +1473,9 @@ function updateTeamRollupHeader(boardOverride) {
   }
   const board = buildOpsBoardRollupFromCache();
   const cached = board._cachedMembers;
-  if (pipeEl) pipeEl.textContent = String(board.pipeline_backlog_count ?? "--");
+  if (pipeEl) {
+    pipeEl.textContent = board.pipeline_backlog_count == null ? "--" : String(board.pipeline_backlog_count);
+  }
   if (cached === 0) {
     if (closedEl) closedEl.textContent = "--";
     qEl.textContent = "--";
@@ -1457,15 +1484,38 @@ function updateTeamRollupHeader(boardOverride) {
     if (noteEl) noteEl.textContent = "Refresh members to load team totals.";
     return;
   }
-  if (closedEl) closedEl.textContent = String(board.closed_cssd_csd_team_count ?? "--");
+  if (closedEl) {
+    closedEl.textContent = board.closed_cssd_csd_team_count == null ? "--" : String(board.closed_cssd_csd_team_count);
+  }
   qEl.textContent = String(board.queue_backlog_count);
   pEl.textContent = String(board.in_progress_count);
   rEl.textContent = String(board.resolved_in_period_count);
   if (noteEl) {
-    noteEl.textContent = cached < teamMembers.length
-      ? `Team totals include ${cached}/${teamMembers.length} members with cached data. Run Refresh All Member Metrics for the full roster.`
-      : "";
+    const parts = [];
+    if (!latestBoardMetricsLoaded) {
+      parts.push("Pipeline Backlog and Team Closed load from Jira when you refresh a member or use Refresh All Member Metrics.");
+    }
+    if (cached < teamMembers.length) {
+      parts.push(`Team totals include ${cached}/${teamMembers.length} members with cached data. Run Refresh All Member Metrics for the full roster.`);
+    }
+    noteEl.textContent = parts.join(" ");
   }
+}
+
+function applyBoardMetricsFromResponse(data) {
+  if (!data || !data.board_metrics) return false;
+  latestBoardMetrics = data.board_metrics;
+  latestBoardMetricsLoaded = true;
+  updateTeamRollupHeader();
+  return true;
+}
+
+function ensureTeamBoardMetrics() {
+  if (boardMetricsRefreshInFlight) return boardMetricsRefreshInFlight;
+  boardMetricsRefreshInFlight = refreshTeamBoardMetrics().finally(() => {
+    boardMetricsRefreshInFlight = null;
+  });
+  return boardMetricsRefreshInFlight;
 }
 
 async function refreshTeamBoardMetrics() {
@@ -1473,6 +1523,8 @@ async function refreshTeamBoardMetrics() {
   delete payload.assignee_username;
   delete payload.member_name;
   payload.member_usernames = teamMembers.map((m) => m.username).filter(Boolean);
+  const pipeEl = document.getElementById("teamPipelineBacklogCount");
+  if (pipeEl && !latestBoardMetricsLoaded) pipeEl.textContent = "…";
   try {
     const res = await fetch("/run-team-board-metrics", {
       method: "POST",
@@ -1480,11 +1532,21 @@ async function refreshTeamBoardMetrics() {
       body: JSON.stringify(payload),
     });
     const data = await res.json();
-    if (res.ok && data.board_metrics) {
-      latestBoardMetrics = data.board_metrics;
-      updateTeamRollupHeader();
+    if (res.ok && applyBoardMetricsFromResponse(data)) {
+      if ((data.warnings || []).length) {
+        const noteEl = document.getElementById("teamRollupNote");
+        if (noteEl) noteEl.textContent = `${noteEl.textContent || ""} ${data.warnings.join(" ")}`.trim();
+      }
+    } else if (!res.ok) {
+      const noteEl = document.getElementById("teamRollupNote");
+      if (noteEl) noteEl.textContent = `Board metrics failed: ${JSON.stringify(data)}`;
+      if (pipeEl && !latestBoardMetricsLoaded) pipeEl.textContent = "--";
     }
-  } catch (e) {}
+  } catch (e) {
+    const noteEl = document.getElementById("teamRollupNote");
+    if (noteEl) noteEl.textContent = `Board metrics error: ${e && e.message ? e.message : String(e)}`;
+    if (pipeEl && !latestBoardMetricsLoaded) pipeEl.textContent = "--";
+  }
 }
 
 function renderTeamPostureMetrics(payload) {
@@ -1583,6 +1645,7 @@ async function refreshTeamPosture() {
     return;
   }
   const payload = teamFormToObject();
+  payload.fetch_board_metrics = true;
   try {
     const res = await fetch("/run-team-posture", {
       method: "POST",
@@ -1598,6 +1661,12 @@ async function refreshTeamPosture() {
     latestTeamPosturePayload = data;
     if (member && member.id) {
       teamPayloadByMemberId[member.id] = data;
+    }
+    if (!applyBoardMetricsFromResponse(data)) {
+      await ensureTeamBoardMetrics();
+    } else if (data.board_metrics_error) {
+      const noteEl = document.getElementById("teamRollupNote");
+      if (noteEl) noteEl.textContent = `Pipeline backlog error: ${data.board_metrics_error}`;
     }
     renderTeamPostureMetrics(data);
     updateTeamReportPeriodLabel();
@@ -1616,9 +1685,20 @@ async function refreshAllTeamMembers() {
     return;
   }
   const base = teamFormToObject();
+  delete base.assignee_username;
+  delete base.member_name;
+  base.member_usernames = teamMembers.map((m) => m.username).filter(Boolean);
+  const boardTask = ensureTeamBoardMetrics();
   let successCount = 0;
-  for (const member of teamMembers) {
-    const payload = { ...base, assignee_username: member.username, member_name: member.name };
+  let boardFromPosture = false;
+  for (let i = 0; i < teamMembers.length; i++) {
+    const member = teamMembers[i];
+    const payload = {
+      ...base,
+      assignee_username: member.username,
+      member_name: member.name,
+      fetch_board_metrics: !boardFromPosture && i === 0,
+    };
     const res = await fetch("/run-team-posture", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1630,7 +1710,10 @@ async function refreshAllTeamMembers() {
     }
     teamPayloadByMemberId[member.id] = data;
     successCount += 1;
+    if (applyBoardMetricsFromResponse(data)) boardFromPosture = true;
   }
+  await boardTask;
+  if (!latestBoardMetricsLoaded) await ensureTeamBoardMetrics();
   if (!activeTeamMemberId && teamMembers[0]) {
     activeTeamMemberId = teamMembers[0].id;
   }
@@ -1644,7 +1727,6 @@ async function refreshAllTeamMembers() {
   }
   updateTeamReportPeriodLabel();
   updateTeamRollupHeader();
-  await refreshTeamBoardMetrics();
   if (snapshotViewMode.team === "live") {
     await refreshOpsMetricTrends(null, "live");
   }
@@ -1800,6 +1882,11 @@ function hydrateLegacyFromDisplay(data) {
 
 function hydrateOpsFromDisplay(data) {
   const board = data.board || {};
+  latestBoardMetrics = {
+    pipeline_backlog_count: board.pipeline_backlog_count,
+    closed_cssd_csd_team_count: board.closed_cssd_csd_team_count,
+  };
+  latestBoardMetricsLoaded = true;
   board._archiveNote = data.note ? `Archived: ${data.note}` : "Archived official report (not live Jira).";
   updateTeamRollupHeader(board);
   const members = data.members || [];
@@ -1846,7 +1933,11 @@ async function applySnapshotSelection(reportUiKey) {
     activeSnapshotId[reportId] = null;
     setArchiveBanner(reportUiKey, false, "");
     if (reportUiKey === "team") {
+      latestBoardMetricsLoaded = false;
+      latestBoardMetrics = {};
+      updateTeamRollupHeader();
       await refreshOpsMetricTrends(null, "live");
+      if (teamMembers.length) await ensureTeamBoardMetrics();
     }
     return;
   }
@@ -1875,6 +1966,9 @@ async function initReportSnapshots(reportUiKey) {
   } else {
     snapshotViewMode[reportUiKey] = "live";
     setArchiveBanner(reportUiKey, false, "");
+    if (reportUiKey === "team" && teamMembers.length) {
+      void ensureTeamBoardMetrics();
+    }
   }
 }
 
@@ -3530,6 +3624,28 @@ def build_team_posture_jql(params: Dict[str, Any], assignee_username: str, inclu
     return (" AND ".join(clauses) if clauses else "order by created desc") + " ORDER BY created DESC"
 
 
+def build_team_board_jql(params: Dict[str, Any]) -> str:
+    """Board-level JQL for team closed metrics: project/issue type (no created window)."""
+    projects = parse_csv_list(params.get("projects"))
+    issue_types = parse_csv_list(params.get("issue_types"))
+    clauses: List[str] = []
+    for clause in [list_clause("project", projects), list_clause("issuetype", issue_types)]:
+        if clause:
+            clauses.append(clause)
+    return (" AND ".join(clauses) if clauses else "order by created desc") + " ORDER BY created DESC"
+
+
+def build_pipeline_backlog_jql(params: Dict[str, Any]) -> str:
+    """Pipeline Backlog: official CSMS Prod filter (Jira UI parity) unless overridden in settings."""
+    custom = (params.get("pipeline_backlog_jql") or "").strip()
+    if custom:
+        return custom
+    created_since = (params.get("pipeline_backlog_created_since") or TEAM_PIPELINE_BACKLOG_CREATED_SINCE_DEFAULT).strip()
+    if "T" in created_since:
+        created_since = created_since.split("T", 1)[0]
+    return TEAM_PIPELINE_BACKLOG_JQL_DEFAULT.format(created_since=created_since)
+
+
 def count_reopened_issues(issues: List[Dict[str, Any]], project_rules: Dict[str, str]) -> int:
     reopened = 0
     reopen_targets = {
@@ -3986,13 +4102,9 @@ def is_unassigned_issue(issue: Dict[str, Any]) -> bool:
     return not issue_current_assignee_username(issue)
 
 
-def is_pipeline_backlog_issue(issue: Dict[str, Any], project_rules: Dict[str, str]) -> bool:
-    """CSSD Under QA Analysis or CSD New, with no Jira assignee."""
-    return is_queue_backlog_issue(issue, project_rules) and is_unassigned_issue(issue)
-
-
-def count_pipeline_backlog(issues: List[Dict[str, Any]], project_rules: Dict[str, str]) -> int:
-    return sum(1 for issue in issues if is_pipeline_backlog_issue(issue, project_rules))
+def count_pipeline_backlog_from_jira(issues: List[Dict[str, Any]]) -> int:
+    """Pipeline backlog count = issues returned by the dedicated Pipeline Backlog JQL."""
+    return len(issues)
 
 
 def build_team_board_metrics_payload(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -4003,30 +4115,62 @@ def build_team_board_metrics_payload(params: Dict[str, Any]) -> Dict[str, Any]:
     max_issues = int(params.get("max_issues") or 0)
     verify_ssl = bool(params.get("verify_ssl", True))
     project_rules = {"CSSD": "Closed", "CSD": "Ready For Production Users"}
-    jql = build_team_posture_jql(params, "", include_assignee=False)
+    pipeline_jql = build_pipeline_backlog_jql(params)
+    closed_jql = build_team_board_jql(params)
     warnings: List[str] = []
+
     try:
-        issues = fetch_jira_issues(base_url, jql, page_size, max_issues, verify_ssl, include_changelog=False)
+        pipeline_issues = fetch_jira_issues(
+            base_url, pipeline_jql, page_size, max_issues, verify_ssl, include_changelog=False
+        )
     except requests.HTTPError as exc:
         status_code = exc.response.status_code if exc.response is not None else None
         if status_code == 500:
-            issues = fetch_jira_issues(base_url, jql, page_size, max_issues, verify_ssl, include_changelog=False)
-            warnings.append("Board metrics loaded without changelog expansion.")
+            pipeline_issues = fetch_jira_issues(
+                base_url, pipeline_jql, page_size, max_issues, verify_ssl, include_changelog=False
+            )
+            warnings.append("Pipeline backlog loaded after Jira 500 retry.")
         else:
             raise
+
+    closed_issues: List[Dict[str, Any]] = []
+    try:
+        closed_issues = fetch_jira_issues(
+            base_url, closed_jql, page_size, max_issues, verify_ssl, include_changelog=True
+        )
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        if status_code == 500:
+            closed_issues = fetch_jira_issues(
+                base_url, closed_jql, page_size, max_issues, verify_ssl, include_changelog=False
+            )
+            warnings.append(
+                "Team closed metrics loaded without changelog; contributed tickets may be missing."
+            )
+        else:
+            raise
+
     csd_assigned_dev_field = (params.get("csd_assigned_dev_field") or "customfield_14700").strip()
     member_usernames = params.get("member_usernames") or []
     if isinstance(member_usernames, str):
         member_usernames = parse_csv_list(member_usernames)
     board_metrics: Dict[str, Any] = {
-        "pipeline_backlog_count": count_pipeline_backlog(issues, project_rules),
+        "pipeline_backlog_count": count_pipeline_backlog_from_jira(pipeline_issues),
     }
     if member_usernames:
         board_metrics["closed_cssd_csd_team_count"] = count_closed_cssd_csd_team_deduped(
-            issues, member_usernames, csd_assigned_dev_field, project_rules
+            closed_issues, member_usernames, csd_assigned_dev_field, project_rules
         )
+    pipeline_count = board_metrics["pipeline_backlog_count"]
+    print(
+        f"[team-board-metrics] pipeline_backlog_count={pipeline_count} "
+        f"pipeline_jql={pipeline_jql!r}",
+        flush=True,
+    )
     return {
-        "jql": jql,
+        "jql": pipeline_jql,
+        "pipeline_backlog_jql": pipeline_jql,
+        "closed_team_jql": closed_jql,
         "warnings": warnings,
         "board_metrics": board_metrics,
     }
@@ -4693,6 +4837,25 @@ def run_team_posture():
             "csv": f"/download-team-posture-export?export_id={export_id}&kind=csv",
             "excel": f"/download-team-posture-export?export_id={export_id}&kind=excel",
         }
+        if params.get("fetch_board_metrics"):
+            try:
+                board_params = dict(params)
+                board_params["member_usernames"] = params.get("member_usernames") or []
+                if not board_params["member_usernames"]:
+                    roster = params.get("team_members") or []
+                    if isinstance(roster, list):
+                        board_params["member_usernames"] = [
+                            (m.get("username") or "").strip()
+                            for m in roster
+                            if (m.get("username") or "").strip()
+                        ]
+                board_payload = build_team_board_metrics_payload(board_params)
+                payload["board_metrics"] = board_payload.get("board_metrics")
+                payload["pipeline_backlog_jql"] = board_payload.get("pipeline_backlog_jql")
+                if board_payload.get("warnings"):
+                    payload["warnings"] = list(payload.get("warnings") or []) + board_payload["warnings"]
+            except Exception as board_exc:
+                payload["board_metrics_error"] = str(board_exc)
         return jsonify(payload)
     except requests.HTTPError as exc:
         details = exc.response.text if exc.response is not None else str(exc)
