@@ -20,7 +20,10 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from requests.auth import HTTPBasicAuth
 
+import snapshots_db as snap_db
+
 app = Flask(__name__)
+snap_db.init_db()
 STATUS_TRANSITION_SLOTS = 30
 CSMS_EXPORT_CACHE: Dict[str, Dict[str, str]] = {}
 TEAM_EXPORT_CACHE: Dict[str, Dict[str, str]] = {}
@@ -35,6 +38,9 @@ TEAM_POSTURE_RESOLVED_STATUS_KEYWORDS: Tuple[str, ...] = (
     "completed",
     "duplicate",
 )
+
+# Operations board: CSSD/CSD only, status must be Closed (exact name, case-insensitive).
+TEAM_OPS_CLOSED_PROJECT_KEYS: Tuple[str, ...] = ("CSSD", "CSD")
 
 # Default Team tab roster when localStorage has no saved members.
 # "username" is the JQL assignee literal passed through assignee in ("...") (see build_team_posture_jql / jql_quote).
@@ -435,14 +441,23 @@ HTML = """
     .team-grid {
       display: grid;
       grid-template-columns: repeat(5, minmax(120px, 1fr));
+      grid-auto-rows: min-content;
       gap: 10px;
       margin-top: 12px;
+      align-items: start;
+    }
+    #teamRollupGrid.team-grid {
+      grid-template-columns: repeat(5, minmax(130px, 1fr));
     }
     .team-metric-card {
       border: 1px solid var(--border);
       border-radius: 12px;
       background: var(--panel-2);
       padding: 12px;
+      height: auto;
+      min-height: 0;
+      align-self: start;
+      overflow: hidden;
     }
     .team-metric-card .label {
       color: var(--muted);
@@ -660,6 +675,110 @@ HTML = """
       .app-nav-actions { flex-direction: row; flex-wrap: wrap; justify-content: center; }
       .team-grid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
     }
+    .archive-banner {
+      background: var(--download-bg);
+      color: var(--download-text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 12px;
+      font-size: 13px;
+    }
+    .snapshot-settings-block {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }
+    .snapshot-settings-block h3 {
+      margin: 0 0 10px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--heading-strong);
+    }
+    .snapshot-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 10px;
+      padding: 0;
+    }
+    .snapshot-toolbar label { font-size: 12px; color: var(--muted); margin-right: 4px; }
+    .snapshot-settings-block .snapshot-toolbar {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 14px;
+      align-items: end;
+    }
+    .snapshot-settings-block .snapshot-toolbar > label {
+      grid-column: span 12;
+      margin: 0;
+    }
+    .snapshot-settings-block .snapshot-toolbar select {
+      grid-column: span 5;
+    }
+    .snapshot-settings-block .snapshot-toolbar input[type="text"] {
+      grid-column: span 4;
+    }
+    .snapshot-settings-block .snapshot-toolbar button {
+      grid-column: span 3;
+    }
+    .snapshot-settings-block .snapshot-toolbar select,
+    .snapshot-settings-block .snapshot-toolbar input[type="text"] {
+      width: 100%;
+      min-width: 0;
+      padding: 11px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--panel-2);
+      color: var(--text);
+      font-size: 14px;
+    }
+    .snapshot-settings-block .baseline-toolbar {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 14px;
+      align-items: end;
+      margin-top: 8px;
+    }
+    .snapshot-settings-block .baseline-toolbar input[type="text"] {
+      grid-column: span 6;
+    }
+    .snapshot-settings-block .baseline-toolbar input[type="number"] {
+      grid-column: span 3;
+    }
+    .snapshot-settings-block .baseline-toolbar button {
+      grid-column: span 3;
+    }
+    .snapshot-status { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+    .team-metric-card .metric-trend-sub {
+      font-size: 11px;
+      font-weight: 700;
+      margin-top: 4px;
+      min-height: 14px;
+    }
+    .team-metric-card .metric-spark-wrap {
+      display: none;
+      height: 0;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    .team-metric-card .metric-spark-wrap.has-chart {
+      display: block;
+      height: 36px;
+      max-height: 36px;
+      margin-top: 6px;
+      position: relative;
+    }
+    .team-metric-card .metric-spark-wrap canvas.metric-sparkline {
+      display: block;
+      width: 100% !important;
+      height: 36px !important;
+      max-height: 36px !important;
+    }
+    .kpi-card .metric-trend-sub { font-size: 11px; font-weight: 700; margin-top: 4px; }
   </style>
 </head>
 <body>
@@ -680,6 +799,7 @@ HTML = """
 
     <section id="csmsDashboardSection" class="app-section report-scope-csms">
       <div class="card">
+        <div id="csmsArchiveBanner" class="archive-banner" hidden></div>
         <div class="hero-head">
           <div>
             <h1 class="section-title">CSMS Application</h1>
@@ -715,10 +835,52 @@ HTML = """
           </div>
         </div>
       </div>
+      <div id="csmsSettingsCard" class="card collapse-card report-scope-csms" style="margin-top:18px;">
+        <button type="button" class="muted-btn collapse-toggle" data-collapse-target="csmsSettings" aria-expanded="false" aria-controls="csmsSettings">Show CSMS Variables & Settings</button>
+        <div id="csmsSettings" class="collapse-body" hidden>
+          <h2>CSMS Executive Incident Summary Parameters</h2>
+          <form id="csmsForm">
+            <div class="field wide"><label>Jira Search Endpoint</label><input name="base_url" value="https://jira.mdthink.maryland.gov/rest/api/2/search" /></div>
+            <div class="field wide"><label>Projects (comma separated)</label><input name="projects" value="CSSD,CSD,CDF" /></div>
+            <div class="field"><label>Report Generation Date/Time</label><input type="datetime-local" name="report_datetime" /></div>
+            <div class="field"><label>Last Report Timestamp</label><input type="datetime-local" name="last_report_timestamp" /></div>
+            <div class="field"><label>Last Report Backlog Tickets (optional)</label><input type="number" name="last_report_backlog_tickets" min="0" placeholder="e.g. 42" /></div>
+            <div class="field"><label>Last Report New Created (optional)</label><input type="number" name="last_report_new_created" min="0" placeholder="e.g. 15" /></div>
+            <div class="field"><label>Last Report Resolved Tickets (optional)</label><input type="number" name="last_report_resolved_tickets" min="0" placeholder="e.g. 18" /></div>
+            <div class="field"><label>Period Length (days)</label><input type="number" name="period_length" value="15" min="1" /></div>
+            <div class="field"><label>Issue Types</label><input name="issue_types" placeholder="Bug, Task" /></div>
+            <div class="field"><label>Status Filters</label><input name="statuses" placeholder="New, Open, Closed" /></div>
+            <div class="field"><label>Components</label><input name="components" placeholder="Financial Management, Case Management" /></div>
+            <div class="field"><label>Page Size</label><input type="number" name="page_size" value="100" min="1" max="500" /></div>
+            <div class="field"><label>Max Issues (0 = all)</label><input type="number" name="max_issues" value="0" min="0" /></div>
+            <div class="field"><label>Process Alignment %</label><input type="number" name="process_alignment_pct" value="60" min="0" max="100" /></div>
+            <div class="field full">
+              <div class="row">
+                <label class="check"><input type="checkbox" name="verify_ssl" checked /> Verify SSL</label>
+                <button type="submit">Refresh from Jira API</button>
+                <button type="button" class="muted-btn" id="csmsExportCsv">Export CSV</button>
+                <button type="button" class="muted-btn" id="csmsExportExcel">Export Excel</button>
+                <button type="button" class="muted-btn" id="csmsExportPdf">Export PDF</button>
+              </div>
+            </div>
+          </form>
+          <div class="field full snapshot-settings-block report-scope-csms">
+            <h3>Official reports &amp; snapshots</h3>
+            <div class="snapshot-toolbar">
+              <label>Official report</label>
+              <select id="csmsSnapshotSelect" data-report-id="exec"></select>
+              <input type="text" id="csmsSnapshotNote" placeholder="Note for save (e.g. Monday exec)" />
+              <button type="button" class="muted-btn" id="csmsSaveSnapshotBtn">Save snapshot</button>
+            </div>
+            <p id="csmsSnapshotStatus" class="snapshot-status small"></p>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section id="teamPostureSection" class="app-section report-scope-team" hidden>
       <div class="card">
+        <div id="teamArchiveBanner" class="archive-banner" hidden></div>
         <div class="hero-head">
           <div>
             <h2>Team Member Ticket Posture</h2>
@@ -728,24 +890,27 @@ HTML = """
           </div>
         </div>
         <div id="teamRollupGrid" class="team-grid" style="margin-bottom:12px;">
-          <div class="team-metric-card" title="Sum of Queue Backlog counts across team members with cached data: CSSD tickets in Under QA Analysis plus CSD tickets in New. Other projects are excluded per member."><div class="label">Team Queue Backlog</div><div id="teamRollupQueueBacklog" class="value">--</div></div>
-          <div class="team-metric-card" title="Sum of In Progress counts across cached members: open CSSD tickets not in New or Under QA Analysis, and open CSD tickets not in New."><div class="label">Team In Progress</div><div id="teamRollupInProgress" class="value">--</div></div>
-          <div class="team-metric-card" title="Sum across cached members: owned tickets in resolved-like status whose resolution time falls between Team Start and End."><div class="label">Team Resolved (Report Period)</div><div id="teamRollupResolvedPeriod" class="value">--</div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="board" data-metric-key="pipeline_backlog_count" title="Unassigned pipeline queue: CSSD in Under QA Analysis, CSD in New. Not owned by a team member."><div class="label">Pipeline Backlog</div><div id="teamPipelineBacklogCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="board" data-metric-key="queue_backlog_count" title="Sum of Queue Backlog counts across team members with cached data: CSSD tickets in Under QA Analysis plus CSD tickets in New. Other projects are excluded per member."><div class="label">Team Queue Backlog</div><div id="teamRollupQueueBacklog" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="board" data-metric-key="in_progress_count" title="Sum of In Progress counts across cached members: open CSSD tickets not in New or Under QA Analysis, and open CSD tickets not in New."><div class="label">Team In Progress</div><div id="teamRollupInProgress" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="board" data-metric-key="resolved_in_period_count" title="Sum across cached members: owned tickets in resolved-like status whose resolution time falls between Team Start and End."><div class="label">Team Resolved (Report Period)</div><div id="teamRollupResolvedPeriod" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="board" data-metric-key="closed_cssd_csd_team_count" title="Unique CSSD/CSD tickets in Closed status where any roster member is assignee/CSD dev owner or contributed a status change. Deduped across the team."><div class="label">Team Closed</div><div id="teamRollupClosedCssdCsd" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
         </div>
         <div id="teamMemberGrid" class="member-grid"></div>
         <div id="teamMetricsGrid" class="team-grid">
-          <div class="team-metric-card" title="Open tickets tied to this member as assignee or CSD Assigned Developer when configured. Done means Closed on CSSD and Ready For Production Users on CSD."><div class="label">Assigned Open Tickets</div><div id="teamOpenCount" class="value">--</div></div>
-          <div class="team-metric-card" title="CSSD: Under QA Analysis. CSD: New. Other projects: not counted. Uses ownership rules for this member."><div class="label">Queue Backlog</div><div id="teamQueueBacklogCount" class="value">--</div></div>
-          <div class="team-metric-card" title="CSSD: open, not New, not Under QA Analysis. CSD: open and not New. Other projects: not counted."><div class="label">In Progress</div><div id="teamInProgressCount" class="value">--</div></div>
-          <div class="team-metric-card" title="Tickets you own where you authored a Jira status change in the changelog within the last eight hours from when this report ran. Requires changelog data from Jira."><div class="label">Worked Status (Last 8 Hours)</div><div id="teamWorkedStatusLast8hCount" class="value">--</div></div>
-          <div class="team-metric-card" title="Tickets owned by someone else under the same ownership rules as Worked On (Assigned to Others), where you authored a status change in the changelog within the last eight hours. Requires changelog data from Jira."><div class="label">Worked Status (Others, Last 8 Hours)</div><div id="teamWorkedStatusOthersLast8hCount" class="value">--</div></div>
-          <div class="team-metric-card" title="Tickets in the date window whose status sounds reopened, where the member owns the ticket or authored at least one status change."><div class="label">Reopened Tickets</div><div id="teamReopenedCount" class="value">--</div></div>
-          <div class="team-metric-card" title="Tickets assigned to this member whose status looks finished, such as resolved, closed, completed, or duplicate."><div class="label">Resolved (Owned)</div><div id="teamResolvedOwnedCount" class="value">--</div></div>
-          <div class="team-metric-card" title="Finished tickets owned by someone else where this member changed the status at least once."><div class="label">Resolved (Contributed)</div><div id="teamResolvedContributedCount" class="value">--</div></div>
-          <div class="team-metric-card" title="Tickets you own that have a Jira resolution time in the rolling last eight hours from when this report ran. Uses the same finished-status rules as Resolved (Owned)."><div class="label">Resolved (Last 8 Hours)</div><div id="teamResolvedLast8hCount" class="value">--</div></div>
-          <div class="team-metric-card" title="Tickets owned by someone else where this member still changed the status at least once."><div class="label">Worked On (Assigned to Others)</div><div id="teamWorkedOtherCount" class="value">--</div></div>
-          <div class="team-metric-card" title="Tickets in this member scope that missed the 24-hour expectation from created time, using the Jira resolution SLA breached field when available, otherwise time to finish."><div class="label">SLA Breach Count</div><div id="teamSlaBreachCount" class="value">--</div></div>
-          <div class="team-metric-card" title="Open tickets still within 24 hours from created but with under eight hours left before that window ends."><div class="label">Open Tickets &lt; 8h to SLA Breach</div><div id="teamSlaNearCount" class="value">--</div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="assigned_open_count" title="Owned CSSD/CSD only: CSSD not Resolved or Closed; CSD not Ready For Production Users (assignee or CSD Assigned Developer)."><div class="label">Assigned Open Tickets</div><div id="teamOpenCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="queue_backlog_count" title="CSSD: Under QA Analysis. CSD: New. Other projects: not counted. Uses ownership rules for this member."><div class="label">Queue Backlog</div><div id="teamQueueBacklogCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="in_progress_count" title="CSSD: open, not New, not Under QA Analysis. CSD: open and not New. Other projects: not counted."><div class="label">In Progress</div><div id="teamInProgressCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="worked_status_last_8h_count" title="Tickets you own where you authored a Jira status change in the changelog within the last eight hours from when this report ran. Requires changelog data from Jira."><div class="label">Worked Status (Last 8 Hours)</div><div id="teamWorkedStatusLast8hCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="worked_status_last_8h_assigned_others_count" title="Tickets owned by someone else under the same ownership rules as Worked On (Assigned to Others), where you authored a status change in the changelog within the last eight hours. Requires changelog data from Jira."><div class="label">Worked Status (Others, Last 8 Hours)</div><div id="teamWorkedStatusOthersLast8hCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="reopened_count" title="Tickets in the date window whose status sounds reopened, where the member owns the ticket or authored at least one status change."><div class="label">Reopened Tickets</div><div id="teamReopenedCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="resolved_owned_count" title="Tickets assigned to this member whose status looks finished, such as resolved, closed, completed, or duplicate."><div class="label">Resolved (Owned)</div><div id="teamResolvedOwnedCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="resolved_contributed_count" title="Finished tickets owned by someone else where this member changed the status at least once."><div class="label">Resolved (Contributed)</div><div id="teamResolvedContributedCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="closed_cssd_csd_count" title="CSSD and CSD tickets in Closed status only, where you are assignee/CSD Assigned Developer or you contributed a status change (combined, no double count)."><div class="label">Closed</div><div id="teamClosedCssdCsdCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="resolved_last_8h_count" title="Tickets you own that have a Jira resolution time in the rolling last eight hours from when this report ran. Uses the same finished-status rules as Resolved (Owned)."><div class="label">Resolved (Last 8 Hours)</div><div id="teamResolvedLast8hCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="worked_on_assigned_others_count" title="Tickets owned by someone else where this member still changed the status at least once."><div class="label">Worked On (Assigned to Others)</div><div id="teamWorkedOtherCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="sla_breach_count" title="Tickets in this member scope that missed the 24-hour expectation from created time, using the Jira resolution SLA breached field when available, otherwise time to finish."><div class="label">SLA Breach Count</div><div id="teamSlaBreachCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="open_near_sla_breach_8h_count" title="Open tickets still within 24 hours from created but with under eight hours left before that window ends."><div class="label">Open Tickets &lt; 8h to SLA Breach</div><div id="teamSlaNearCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
           <div class="team-metric-card" title="Among open tickets assigned to this member, the issue key that has waited the longest since creation."><div class="label">Oldest Open Ticket</div><div id="teamOldestTicket" class="value">--</div></div>
           <div class="team-metric-card" title="How many days that oldest open ticket has been waiting."><div class="label">Oldest Open Age (days)</div><div id="teamOldestAge" class="value">--</div></div>
         </div>
@@ -766,10 +931,71 @@ HTML = """
           <canvas id="teamLabelsChart"></canvas>
         </div>
       </div>
+      <div id="teamSettingsCard" class="card collapse-card report-scope-team" style="margin-top:18px;">
+        <button type="button" class="muted-btn collapse-toggle" data-collapse-target="teamSettings" aria-expanded="false" aria-controls="teamSettings">Show Team Posture Variables & Settings</button>
+        <div id="teamSettings" class="collapse-body" hidden>
+          <h2>Team Posture Settings</h2>
+          <form id="teamPostureForm">
+            <div class="field wide"><label>Jira Search Endpoint</label><input name="base_url" value="https://jira.mdthink.maryland.gov/rest/api/2/search" /></div>
+            <div class="field wide"><label>Projects (comma separated)</label><input name="projects" value="CSSD,CSD,CDF" /></div>
+            <div class="field"><label>Start Date/Time</label><input type="datetime-local" name="start_dt" /></div>
+            <div class="field"><label>End Date/Time</label><input type="datetime-local" name="end_dt" /></div>
+            <div class="field"><label>Issue Types</label><input name="issue_types" placeholder="Bug, Task" /></div>
+            <div class="field"><label>CSD Assigned Developer Field Key</label><input name="csd_assigned_dev_field" value="customfield_14700" placeholder="customfield_12345" /></div>
+            <div class="field"><label>Page Size</label><input type="number" name="page_size" value="50" min="1" max="100" /></div>
+            <div class="field"><label>Max Issues (0 = all)</label><input type="number" name="max_issues" value="0" min="0" /></div>
+            <div class="field full">
+              <div class="row">
+                <label class="check"><input type="checkbox" name="verify_ssl" checked /> Verify SSL</label>
+              </div>
+            </div>
+            <div class="field full">
+              <h3 style="margin:0 0 8px;">Team Members</h3>
+              <div class="row">
+                <input id="teamMemberNameInput" placeholder="Display name" />
+                <input id="teamMemberUsernameInput" placeholder="Assignee username" />
+                <button type="button" class="muted-btn" id="teamAddMemberBtn">Add Member</button>
+                <button type="button" class="muted-btn" id="teamRemoveMemberBtn">Remove Selected</button>
+              </div>
+            </div>
+            <div class="field full">
+              <div class="row">
+                <button type="button" class="muted-btn" id="teamRefreshBtn">Refresh All Member Metrics</button>
+                <button type="button" class="muted-btn" id="teamExportCsvBtn">Download CSV</button>
+                <button type="button" class="muted-btn" id="teamExportExcelBtn">Download Excel</button>
+                <button type="button" class="muted-btn" id="teamExportAllBtn">Download Team CSV</button>
+              </div>
+            </div>
+          </form>
+          <div class="field full snapshot-settings-block report-scope-team">
+            <h3>Official reports &amp; snapshots</h3>
+            <div class="snapshot-toolbar">
+              <label>Official report</label>
+              <select id="teamSnapshotSelect" data-report-id="ops"></select>
+              <input type="text" id="teamSnapshotNote" placeholder="Note for save (e.g. AM ops)" />
+              <button type="button" class="muted-btn" id="teamSaveSnapshotBtn">Save snapshot</button>
+            </div>
+            <p id="teamSnapshotStatus" class="snapshot-status small"></p>
+            <details class="small" style="margin-top:10px;">
+              <summary>Manual comparison baselines (fallback when no prior snapshot)</summary>
+              <div class="baseline-toolbar">
+                <input type="text" id="teamBaselineMetric" placeholder="metric_key e.g. pipeline_backlog_count" />
+                <input type="number" id="teamBaselineValue" placeholder="Value" />
+                <button type="button" class="muted-btn" id="teamBaselineSaveBtn">Save baseline</button>
+              </div>
+            </details>
+          </div>
+        </div>
+      </div>
+      <div id="teamCsvPreviewCard" class="card report-scope-team" style="margin-top:18px;">
+        <h2>CSV Preview</h2>
+        <pre id="teamCsvPreview">Run Team Posture refresh to preview CSV rows.</pre>
+      </div>
     </section>
 
     <section id="legacyDashboardSection" class="app-section report-scope-legacy" hidden>
       <div class="card" style="margin-top:18px;">
+        <div id="legacyArchiveBanner" class="archive-banner" hidden></div>
         <h2>Trends</h2>
         <p id="legacyReportPeriod" class="small" style="margin:4px 0 12px;color:var(--muted);">Report period: set Start and End in Report Settings.</p>
         <div class="row kpi-grid" id="legacyKpis"></div>
@@ -792,10 +1018,7 @@ HTML = """
           <pre id="legacyStatusSummary">Run a legacy dashboard refresh.</pre>
         </div>
       </div>
-    </section>
-
-    <section id="settingsSection" class="app-section">
-      <div id="legacySettingsCard" class="card collapse-card report-scope-legacy" hidden>
+      <div id="legacySettingsCard" class="card collapse-card report-scope-legacy" style="margin-top:18px;">
         <button type="button" class="muted-btn collapse-toggle" data-collapse-target="legacySettings" aria-expanded="false" aria-controls="legacySettings">Show Report Variables & Settings</button>
         <div id="legacySettings" class="collapse-body" hidden>
           <h2>Report Settings</h2>
@@ -833,83 +1056,17 @@ HTML = """
               </div>
             </div>
           </form>
+          <div class="field full snapshot-settings-block report-scope-legacy">
+            <h3>Official reports &amp; snapshots</h3>
+            <div class="snapshot-toolbar">
+              <label>Official report</label>
+              <select id="legacySnapshotSelect" data-report-id="legacy"></select>
+              <input type="text" id="legacySnapshotNote" placeholder="Note for save" />
+              <button type="button" class="muted-btn" id="legacySaveSnapshotBtn">Save snapshot</button>
+            </div>
+            <p id="legacySnapshotStatus" class="snapshot-status small"></p>
+          </div>
         </div>
-      </div>
-
-      <div id="csmsSettingsCard" class="card collapse-card report-scope-csms" style="margin-top:18px;">
-        <button type="button" class="muted-btn collapse-toggle" data-collapse-target="csmsSettings" aria-expanded="false" aria-controls="csmsSettings">Show CSMS Variables & Settings</button>
-        <div id="csmsSettings" class="collapse-body" hidden>
-          <h2>CSMS Executive Incident Summary Parameters</h2>
-          <form id="csmsForm">
-            <div class="field wide"><label>Jira Search Endpoint</label><input name="base_url" value="https://jira.mdthink.maryland.gov/rest/api/2/search" /></div>
-            <div class="field wide"><label>Projects (comma separated)</label><input name="projects" value="CSSD,CSD,CDF" /></div>
-            <div class="field"><label>Report Generation Date/Time</label><input type="datetime-local" name="report_datetime" /></div>
-            <div class="field"><label>Last Report Timestamp</label><input type="datetime-local" name="last_report_timestamp" /></div>
-            <div class="field"><label>Last Report Backlog Tickets (optional)</label><input type="number" name="last_report_backlog_tickets" min="0" placeholder="e.g. 42" /></div>
-            <div class="field"><label>Last Report New Created (optional)</label><input type="number" name="last_report_new_created" min="0" placeholder="e.g. 15" /></div>
-            <div class="field"><label>Last Report Resolved Tickets (optional)</label><input type="number" name="last_report_resolved_tickets" min="0" placeholder="e.g. 18" /></div>
-            <div class="field"><label>Period Length (days)</label><input type="number" name="period_length" value="15" min="1" /></div>
-            <div class="field"><label>Issue Types</label><input name="issue_types" placeholder="Bug, Task" /></div>
-            <div class="field"><label>Status Filters</label><input name="statuses" placeholder="New, Open, Closed" /></div>
-            <div class="field"><label>Components</label><input name="components" placeholder="Financial Management, Case Management" /></div>
-            <div class="field"><label>Page Size</label><input type="number" name="page_size" value="100" min="1" max="500" /></div>
-            <div class="field"><label>Max Issues (0 = all)</label><input type="number" name="max_issues" value="0" min="0" /></div>
-            <div class="field"><label>Process Alignment %</label><input type="number" name="process_alignment_pct" value="60" min="0" max="100" /></div>
-            <div class="field full">
-              <div class="row">
-                <label class="check"><input type="checkbox" name="verify_ssl" checked /> Verify SSL</label>
-                <button type="submit">Refresh from Jira API</button>
-                <button type="button" class="muted-btn" id="csmsExportCsv">Export CSV</button>
-                <button type="button" class="muted-btn" id="csmsExportExcel">Export Excel</button>
-                <button type="button" class="muted-btn" id="csmsExportPdf">Export PDF</button>
-              </div>
-            </div>
-          </form>
-        </div>
-      </div>
-
-      <div id="teamSettingsCard" class="card collapse-card report-scope-team" style="margin-top:18px;" hidden>
-        <button type="button" class="muted-btn collapse-toggle" data-collapse-target="teamSettings" aria-expanded="false" aria-controls="teamSettings">Show Team Posture Variables & Settings</button>
-        <div id="teamSettings" class="collapse-body" hidden>
-          <h2>Team Posture Settings</h2>
-          <form id="teamPostureForm">
-            <div class="field wide"><label>Jira Search Endpoint</label><input name="base_url" value="https://jira.mdthink.maryland.gov/rest/api/2/search" /></div>
-            <div class="field wide"><label>Projects (comma separated)</label><input name="projects" value="CSSD,CSD,CDF" /></div>
-            <div class="field"><label>Start Date/Time</label><input type="datetime-local" name="start_dt" /></div>
-            <div class="field"><label>End Date/Time</label><input type="datetime-local" name="end_dt" /></div>
-            <div class="field"><label>Issue Types</label><input name="issue_types" placeholder="Bug, Task" /></div>
-            <div class="field"><label>CSD Assigned Developer Field Key</label><input name="csd_assigned_dev_field" value="customfield_14700" placeholder="customfield_12345" /></div>
-            <div class="field"><label>Page Size</label><input type="number" name="page_size" value="50" min="1" max="100" /></div>
-            <div class="field"><label>Max Issues (0 = all)</label><input type="number" name="max_issues" value="0" min="0" /></div>
-            <div class="field full">
-              <div class="row">
-                <label class="check"><input type="checkbox" name="verify_ssl" checked /> Verify SSL</label>
-              </div>
-            </div>
-            <div class="field full">
-              <h3 style="margin:0 0 8px;">Team Members</h3>
-              <div class="row">
-                <input id="teamMemberNameInput" placeholder="Display name" />
-                <input id="teamMemberUsernameInput" placeholder="Assignee username" />
-                <button type="button" class="muted-btn" id="teamAddMemberBtn">Add Member</button>
-                <button type="button" class="muted-btn" id="teamRemoveMemberBtn">Remove Selected</button>
-              </div>
-            </div>
-            <div class="field full">
-              <div class="row">
-                <button type="button" class="muted-btn" id="teamRefreshBtn">Refresh All Member Metrics</button>
-                <button type="button" class="muted-btn" id="teamExportCsvBtn">Download CSV</button>
-                <button type="button" class="muted-btn" id="teamExportExcelBtn">Download Excel</button>
-                <button type="button" class="muted-btn" id="teamExportAllBtn">Download Team CSV</button>
-              </div>
-            </div>
-          </form>
-        </div>
-      </div>
-
-      <div id="teamCsvPreviewCard" class="card report-scope-team" style="margin-top:18px;" hidden>
-        <h2>CSV Preview</h2>
-        <pre id="teamCsvPreview">Run Team Posture refresh to preview CSV rows.</pre>
       </div>
     </section>
 
@@ -1154,10 +1311,15 @@ let csmsCharts = { daily: null, status: null, top: null };
 let legacyCharts = { status: null, daily: null };
 let teamCharts = { labels: null };
 let latestCsmsPayload = null;
+let latestLegacyPayload = null;
+let latestBoardMetrics = {};
 let teamMembers = [];
 let activeTeamMemberId = null;
 let latestTeamPosturePayload = null;
 let teamPayloadByMemberId = {};
+const snapshotViewMode = { exec: "archive", ops: "archive", legacy: "archive" };
+const activeSnapshotId = { exec: null, ops: null, legacy: null };
+const metricSparkCharts = {};
 
 const DEFAULT_TEAM_MEMBERS = __DEFAULT_TEAM_ROSTER_JSON__;
 
@@ -1203,6 +1365,7 @@ function renderTeamMemberIcons() {
       if (cached) {
         latestTeamPosturePayload = cached;
         renderTeamPostureMetrics(cached);
+        if (snapshotViewMode.team === "live") refreshOpsMetricTrends(null, "live");
       } else {
         refreshTeamPosture();
       }
@@ -1226,46 +1389,102 @@ function teamFormToObject() {
   return obj;
 }
 
-function updateTeamRollupHeader() {
+function buildOpsBoardRollupFromCache() {
+  const board = {
+    pipeline_backlog_count: Number(latestBoardMetrics.pipeline_backlog_count ?? 0),
+    closed_cssd_csd_team_count: Number(latestBoardMetrics.closed_cssd_csd_team_count ?? 0),
+    queue_backlog_count: 0,
+    in_progress_count: 0,
+    resolved_in_period_count: 0,
+    sla_breach_count: 0,
+    open_near_sla_breach_8h_count: 0,
+  };
+  let cached = 0;
+  for (const m of teamMembers) {
+    const pl = teamPayloadByMemberId[m.id];
+    if (!pl || !pl.metrics) continue;
+    cached += 1;
+    board.queue_backlog_count += Number(pl.metrics.queue_backlog_count ?? 0);
+    board.in_progress_count += Number(pl.metrics.in_progress_count ?? 0);
+    board.resolved_in_period_count += Number(pl.metrics.resolved_in_period_count ?? 0);
+    board.sla_breach_count += Number(pl.metrics.sla_breach_count ?? 0);
+    board.open_near_sla_breach_8h_count += Number(pl.metrics.open_near_sla_breach_8h_count ?? 0);
+  }
+  if (latestBoardMetrics.closed_cssd_csd_team_count == null && cached > 0) {
+    board.closed_cssd_csd_team_count = teamMembers.reduce((sum, m) => {
+      const pl = teamPayloadByMemberId[m.id];
+      return sum + Number(pl?.metrics?.closed_cssd_csd_count ?? 0);
+    }, 0);
+  }
+  board._cachedMembers = cached;
+  return board;
+}
+
+function updateTeamRollupHeader(boardOverride) {
   const qEl = document.getElementById("teamRollupQueueBacklog");
   const pEl = document.getElementById("teamRollupInProgress");
   const rEl = document.getElementById("teamRollupResolvedPeriod");
+  const closedEl = document.getElementById("teamRollupClosedCssdCsd");
+  const pipeEl = document.getElementById("teamPipelineBacklogCount");
   const noteEl = document.getElementById("teamRollupNote");
   if (!qEl || !pEl || !rEl) return;
+  if (boardOverride) {
+    if (pipeEl) pipeEl.textContent = String(boardOverride.pipeline_backlog_count ?? "--");
+    if (closedEl) closedEl.textContent = String(boardOverride.closed_cssd_csd_team_count ?? "--");
+    qEl.textContent = String(boardOverride.queue_backlog_count ?? "--");
+    pEl.textContent = String(boardOverride.in_progress_count ?? "--");
+    rEl.textContent = String(boardOverride.resolved_in_period_count ?? "--");
+    if (noteEl) noteEl.textContent = boardOverride._archiveNote || "";
+    return;
+  }
   if (!teamMembers.length) {
+    if (pipeEl) pipeEl.textContent = "--";
+    if (closedEl) closedEl.textContent = "--";
     qEl.textContent = "--";
     pEl.textContent = "--";
     rEl.textContent = "--";
     if (noteEl) noteEl.textContent = "";
     return;
   }
-  let qb = 0;
-  let ip = 0;
-  let rs = 0;
-  let cached = 0;
-  for (const m of teamMembers) {
-    const pl = teamPayloadByMemberId[m.id];
-    if (!pl || !pl.metrics) continue;
-    cached += 1;
-    qb += Number(pl.metrics.queue_backlog_count ?? 0);
-    ip += Number(pl.metrics.in_progress_count ?? 0);
-    rs += Number(pl.metrics.resolved_in_period_count ?? 0);
-  }
+  const board = buildOpsBoardRollupFromCache();
+  const cached = board._cachedMembers;
+  if (pipeEl) pipeEl.textContent = String(board.pipeline_backlog_count ?? "--");
   if (cached === 0) {
+    if (closedEl) closedEl.textContent = "--";
     qEl.textContent = "--";
     pEl.textContent = "--";
     rEl.textContent = "--";
     if (noteEl) noteEl.textContent = "Refresh members to load team totals.";
     return;
   }
-  qEl.textContent = String(qb);
-  pEl.textContent = String(ip);
-  rEl.textContent = String(rs);
+  if (closedEl) closedEl.textContent = String(board.closed_cssd_csd_team_count ?? "--");
+  qEl.textContent = String(board.queue_backlog_count);
+  pEl.textContent = String(board.in_progress_count);
+  rEl.textContent = String(board.resolved_in_period_count);
   if (noteEl) {
     noteEl.textContent = cached < teamMembers.length
       ? `Team totals include ${cached}/${teamMembers.length} members with cached data. Run Refresh All Member Metrics for the full roster.`
       : "";
   }
+}
+
+async function refreshTeamBoardMetrics() {
+  const payload = teamFormToObject();
+  delete payload.assignee_username;
+  delete payload.member_name;
+  payload.member_usernames = teamMembers.map((m) => m.username).filter(Boolean);
+  try {
+    const res = await fetch("/run-team-board-metrics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (res.ok && data.board_metrics) {
+      latestBoardMetrics = data.board_metrics;
+      updateTeamRollupHeader();
+    }
+  } catch (e) {}
 }
 
 function renderTeamPostureMetrics(payload) {
@@ -1274,6 +1493,8 @@ function renderTeamPostureMetrics(payload) {
   const resolvedOwned = metrics.resolved_owned_count ?? metrics.resolved_count ?? 0;
   document.getElementById("teamResolvedOwnedCount").textContent = String(resolvedOwned);
   document.getElementById("teamResolvedContributedCount").textContent = String(metrics.resolved_contributed_count ?? 0);
+  const closedEl = document.getElementById("teamClosedCssdCsdCount");
+  if (closedEl) closedEl.textContent = String(metrics.closed_cssd_csd_count ?? 0);
   document.getElementById("teamResolvedLast8hCount").textContent = String(metrics.resolved_last_8h_count ?? 0);
   document.getElementById("teamOpenCount").textContent = String(metrics.assigned_open_count ?? 0);
   const qbEl = document.getElementById("teamQueueBacklogCount");
@@ -1300,6 +1521,9 @@ function renderTeamPostureMetrics(payload) {
   renderTeamLabelsChart(payload.label_distribution || {});
   renderTeamCsvPreview(payload.raw_rows || []);
   updateTeamRollupHeader();
+  if (snapshotViewMode.team === "live") {
+    refreshOpsMetricTrends(null, "live");
+  }
 }
 
 function renderTeamLabelsChart(labelDistribution) {
@@ -1420,6 +1644,10 @@ async function refreshAllTeamMembers() {
   }
   updateTeamReportPeriodLabel();
   updateTeamRollupHeader();
+  await refreshTeamBoardMetrics();
+  if (snapshotViewMode.team === "live") {
+    await refreshOpsMetricTrends(null, "live");
+  }
 }
 
 function formatReportDatetimeLocal(value) {
@@ -1471,6 +1699,396 @@ function updateLegacyReportPeriodLabel() {
   }
 }
 
+const REPORT_ID_MAP = { csms: "exec", team: "ops", legacy: "legacy" };
+
+function formatDeltaLine(delta) {
+  if (!delta || delta.change === undefined) return "—";
+  const ch = Number(delta.change);
+  const arrow = ch > 0 ? "▲" : ch < 0 ? "▼" : "•";
+  const pct = delta.pct_change != null ? ` (${delta.pct_change > 0 ? "+" : ""}${delta.pct_change}%)` : "";
+  const src = delta._source === "manual" ? "manual baseline" : "prior report";
+  return `${arrow} ${ch > 0 ? "+" : ""}${ch}${pct} vs ${src}`;
+}
+
+function deltaTone(metricKey, change) {
+  const upBad = new Set([
+    "backlog", "new_created", "pipeline_backlog_count", "queue_backlog_count",
+    "assigned_open_count", "reopened_count", "sla_breach_count",
+  ]);
+  const upGood = new Set([
+    "resolved", "resolved_in_period_count", "resolved_owned_count",
+    "resolved_contributed_count", "closed_cssd_csd_count", "closed_cssd_csd_team_count",
+  ]);
+  const ch = Number(change);
+  if (ch === 0) return "trend-pos";
+  const up = ch > 0;
+  if (upGood.has(metricKey)) return up ? "trend-pos" : "trend-neg";
+  return (upBad.has(metricKey) ? !up : up) ? "trend-pos" : "trend-neg";
+}
+
+function setArchiveBanner(reportKey, visible, text) {
+  const id = reportKey === "csms" ? "csmsArchiveBanner" : reportKey === "team" ? "teamArchiveBanner" : "legacyArchiveBanner";
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.hidden = !visible;
+  el.textContent = text || "";
+}
+
+async function loadSnapshotOptions(reportId, selectEl) {
+  if (!selectEl) return null;
+  const res = await fetch(`/snapshots/list-options?report_id=${encodeURIComponent(reportId)}`);
+  const data = await res.json();
+  if (!res.ok) return null;
+  const prev = selectEl.value;
+  selectEl.innerHTML = "";
+  const liveOpt = document.createElement("option");
+  liveOpt.value = "live";
+  liveOpt.textContent = "Live (refresh from Jira)";
+  selectEl.appendChild(liveOpt);
+  for (const opt of data.options || []) {
+    const o = document.createElement("option");
+    o.value = String(opt.id);
+    o.textContent = opt.label;
+    selectEl.appendChild(o);
+  }
+  if (prev && [...selectEl.options].some((o) => o.value === prev)) {
+    selectEl.value = prev;
+  } else if (data.latest_id) {
+    selectEl.value = String(data.latest_id);
+    activeSnapshotId[reportId] = data.latest_id;
+    snapshotViewMode[reportId === "exec" ? "csms" : reportId === "ops" ? "team" : "legacy"] = "archive";
+  } else {
+    selectEl.value = "live";
+    snapshotViewMode[reportId === "exec" ? "csms" : reportId === "ops" ? "team" : "legacy"] = "live";
+  }
+  const statusEl = selectEl.id === "csmsSnapshotSelect" ? document.getElementById("csmsSnapshotStatus")
+    : selectEl.id === "teamSnapshotSelect" ? document.getElementById("teamSnapshotStatus")
+    : document.getElementById("legacySnapshotStatus");
+  if (statusEl) {
+    const cadence = data.suggested_cadence ? `Suggested cadence: ${data.suggested_cadence}. ` : "";
+    statusEl.textContent = data.options?.length
+      ? `${cadence}${data.options.length} saved report(s).`
+      : `${cadence}No saved reports yet — run live and Save snapshot.`;
+  }
+  return data;
+}
+
+async function loadSnapshotDisplay(reportId, snapshotId) {
+  const res = await fetch(`/snapshots/${snapshotId}/display`);
+  const data = await res.json();
+  if (!res.ok) return null;
+  return data;
+}
+
+function hydrateCsmsFromDisplay(data) {
+  document.getElementById("csmsSubtitle").textContent = `Executive Incident Summary | ${(data.periods && data.periods.period2 && data.periods.period2.label) || "saved report"}`;
+  document.getElementById("csmsElapsed").textContent = data.elapsed_time_sentence || "Archived report.";
+  renderCsmsKpis(data.kpis || {});
+  renderCsmsNarratives({ narratives: data.narratives || {} });
+  renderCsmsHealth(data.operational_health || {});
+  document.getElementById("csmsStuck").textContent = JSON.stringify((data.kpis && data.kpis.longest_open) || {}, null, 2);
+  renderCsmsCharts(data.charts || {});
+}
+
+function hydrateLegacyFromDisplay(data) {
+  renderLegacyKpis(data.kpis || {});
+  renderLegacyCharts(data.charts || {});
+  renderLegacyStatusSummary(data.charts || {});
+  const lines = [...(data.warnings || []), ...(data.insights || [])];
+  document.getElementById("legacyInsights").textContent = lines.join("\\n") || "Archived report.";
+}
+
+function hydrateOpsFromDisplay(data) {
+  const board = data.board || {};
+  board._archiveNote = data.note ? `Archived: ${data.note}` : "Archived official report (not live Jira).";
+  updateTeamRollupHeader(board);
+  const members = data.members || [];
+  if (members.length && !activeTeamMemberId) {
+    activeTeamMemberId = teamMembers[0] ? teamMembers[0].id : null;
+  }
+  const activeMember = activeTeamMember();
+  let memberView = null;
+  if (activeMember) {
+    memberView = members.find((m) => (m.username || "").toLowerCase() === (activeMember.username || "").toLowerCase());
+  }
+  if (memberView) {
+    latestTeamPosturePayload = {
+      member: { name: memberView.name, assignee_username: memberView.username },
+      metrics: memberView.metrics || {},
+      status_distribution: memberView.status_distribution || {},
+      label_distribution: memberView.label_distribution || {},
+      oldest_open: memberView.oldest_open || {},
+      raw_rows: [],
+    };
+    renderTeamPostureMetrics(latestTeamPosturePayload);
+  } else if (members[0]) {
+    const m0 = members[0];
+    latestTeamPosturePayload = {
+      member: { name: m0.name, assignee_username: m0.username },
+      metrics: m0.metrics || {},
+      status_distribution: m0.status_distribution || {},
+      label_distribution: m0.label_distribution || {},
+      oldest_open: m0.oldest_open || {},
+      raw_rows: [],
+    };
+    renderTeamPostureMetrics(latestTeamPosturePayload);
+  }
+}
+
+async function applySnapshotSelection(reportUiKey) {
+  const reportId = REPORT_ID_MAP[reportUiKey];
+  const selectId = reportUiKey === "csms" ? "csmsSnapshotSelect" : reportUiKey === "team" ? "teamSnapshotSelect" : "legacySnapshotSelect";
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const val = sel.value;
+  if (val === "live") {
+    snapshotViewMode[reportUiKey] = "live";
+    activeSnapshotId[reportId] = null;
+    setArchiveBanner(reportUiKey, false, "");
+    if (reportUiKey === "team") {
+      await refreshOpsMetricTrends(null, "live");
+    }
+    return;
+  }
+  const snapId = parseInt(val, 10);
+  if (!snapId) return;
+  snapshotViewMode[reportUiKey] = "archive";
+  activeSnapshotId[reportId] = snapId;
+  const display = await loadSnapshotDisplay(reportId, snapId);
+  if (!display) return;
+  const bannerText = `Official saved report — ${display.captured_at || ""}${display.note ? " — " + display.note : ""} — not live Jira`;
+  setArchiveBanner(reportUiKey, true, bannerText);
+  if (reportUiKey === "csms") hydrateCsmsFromDisplay(display);
+  if (reportUiKey === "legacy") hydrateLegacyFromDisplay(display);
+  if (reportUiKey === "team") {
+    hydrateOpsFromDisplay(display);
+    await refreshOpsMetricTrends(snapId, "archive");
+  }
+}
+
+async function initReportSnapshots(reportUiKey) {
+  const reportId = REPORT_ID_MAP[reportUiKey];
+  const selectId = reportUiKey === "csms" ? "csmsSnapshotSelect" : reportUiKey === "team" ? "teamSnapshotSelect" : "legacySnapshotSelect";
+  const data = await loadSnapshotOptions(reportId, document.getElementById(selectId));
+  if (data && data.latest_id) {
+    await applySnapshotSelection(reportUiKey);
+  } else {
+    snapshotViewMode[reportUiKey] = "live";
+    setArchiveBanner(reportUiKey, false, "");
+  }
+}
+
+function clearSparklineWrap(wrap) {
+  if (!wrap) return;
+  const key = wrap.dataset.sparkKey;
+  if (key) destroyChart(metricSparkCharts[key]);
+  wrap.classList.remove("has-chart");
+  wrap.innerHTML = "";
+  delete wrap.dataset.sparkKey;
+}
+
+async function renderMetricSparkline(wrap, reportId, metricKey, memberUsername, toSnapshotId) {
+  if (!wrap || typeof Chart === "undefined") return;
+  const key = `${reportId}:${metricKey}:${memberUsername || "board"}`;
+  wrap.dataset.sparkKey = key;
+  destroyChart(metricSparkCharts[key]);
+  clearSparklineWrap(wrap);
+
+  let url = `/snapshots/trends?report_id=${encodeURIComponent(reportId)}&metric_key=${encodeURIComponent(metricKey)}`;
+  if (memberUsername) url += `&member_username=${encodeURIComponent(memberUsername)}`;
+  if (toSnapshotId) url += `&to_snapshot_id=${toSnapshotId}`;
+  const res = await fetch(url);
+  const series = await res.json();
+  const points = series.data || [];
+  if (!res.ok || points.length < 2) {
+    metricSparkCharts[key] = null;
+    return;
+  }
+
+  wrap.classList.add("has-chart");
+  const canvas = document.createElement("canvas");
+  canvas.className = "metric-sparkline";
+  wrap.appendChild(canvas);
+  const w = Math.max(wrap.clientWidth || 160, 80);
+  canvas.width = w;
+  canvas.height = 36;
+  metricSparkCharts[key] = new Chart(canvas.getContext("2d"), {
+    type: "line",
+    data: {
+      labels: series.labels || [],
+      datasets: [{
+        data: points,
+        borderColor: "rgba(47, 122, 248, 0.9)",
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0.2,
+        fill: false,
+      }],
+    },
+    options: {
+      responsive: false,
+      animation: false,
+      plugins: { legend: { display: false } },
+      scales: { x: { display: false }, y: { display: false } },
+    },
+  });
+}
+
+async function applyDeltaToCard(card, reportId, metricKey, memberUsername, snapshotId, liveBoard) {
+  const sub = card.querySelector(".metric-trend-sub");
+  if (!sub) return;
+  let deltas = [];
+  let baselineSource = "prior report";
+  if (snapshotId) {
+    let url = `/snapshots/compare?report_id=${encodeURIComponent(reportId)}&snapshot_id=${snapshotId}`;
+    if (memberUsername) url += `&member_username=${encodeURIComponent(memberUsername)}`;
+    const res = await fetch(url);
+    const cmp = await res.json();
+    if (res.ok) {
+      deltas = cmp.deltas || [];
+      baselineSource = (cmp.baseline && cmp.baseline.source) || "prior report";
+    }
+  } else if (liveBoard) {
+    const metricsBody = memberUsername
+      ? { members: [{ username: memberUsername, metrics: liveBoard.memberMetrics || {} }] }
+      : { board: liveBoard };
+    const res = await fetch("/snapshots/compare-live", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ report_id: reportId, metrics: metricsBody, member_username: memberUsername || null }),
+    });
+    const cmp = await res.json();
+    if (res.ok) {
+      deltas = cmp.deltas || [];
+      baselineSource = (cmp.baseline && cmp.baseline.source) || "prior report";
+    }
+  }
+  const d = deltas.find((x) => x.metric_key === metricKey);
+  if (!d) {
+    sub.textContent = "—";
+    sub.className = "metric-trend-sub";
+    return;
+  }
+  d._source = baselineSource === "manual" ? "manual baseline" : "prior report";
+  sub.textContent = formatDeltaLine(d);
+  sub.className = `metric-trend-sub ${deltaTone(metricKey, d.change)}`;
+}
+
+async function refreshOpsMetricTrends(snapshotId, mode) {
+  const reportId = "ops";
+  const member = activeTeamMember();
+  const memberUsername = member ? member.username : null;
+  const liveBoard = mode === "live" ? buildOpsBoardRollupFromCache() : null;
+  if (mode === "live" && liveBoard) {
+    liveBoard.memberMetrics = (latestTeamPosturePayload && latestTeamPosturePayload.metrics) || {};
+  }
+  const cards = document.querySelectorAll("#teamRollupGrid .team-metric-card[data-metric-key], #teamMetricsGrid .team-metric-card[data-metric-key]");
+  for (const card of cards) {
+    const metricKey = card.getAttribute("data-metric-key");
+    const scope = card.getAttribute("data-metric-scope");
+    const wrap = card.querySelector(".metric-spark-wrap");
+    const uname = scope === "member" ? memberUsername : null;
+    if (scope === "member" && !uname) {
+      clearSparklineWrap(wrap);
+      continue;
+    }
+    await renderMetricSparkline(wrap, reportId, metricKey, uname, snapshotId || null);
+    if (mode === "archive" && snapshotId) {
+      await applyDeltaToCard(card, reportId, metricKey, uname, snapshotId, null);
+    } else if (mode === "live") {
+      await applyDeltaToCard(card, reportId, metricKey, uname, null, scope === "board" ? liveBoard : { memberMetrics: (latestTeamPosturePayload && latestTeamPosturePayload.metrics) || {} });
+    }
+  }
+}
+
+function buildOpsSavePayload() {
+  const board = buildOpsBoardRollupFromCache();
+  const members = [];
+  for (const m of teamMembers) {
+    const pl = teamPayloadByMemberId[m.id];
+    if (!pl) continue;
+    members.push({
+      username: m.username,
+      name: m.name,
+      metrics: pl.metrics || {},
+      status_distribution: pl.status_distribution || {},
+      label_distribution: pl.label_distribution || {},
+      oldest_open: pl.oldest_open || {},
+    });
+  }
+  return { board, members };
+}
+
+async function saveReportSnapshot(reportUiKey) {
+  const reportId = REPORT_ID_MAP[reportUiKey];
+  const noteId = reportUiKey === "csms" ? "csmsSnapshotNote" : reportUiKey === "team" ? "teamSnapshotNote" : "legacySnapshotNote";
+  const note = (document.getElementById(noteId) || {}).value || "";
+  let metrics = null;
+  let params = null;
+  if (reportUiKey === "csms") {
+    if (!latestCsmsPayload) { alert("Run the executive report first."); return; }
+    params = csmsFormToObject(document.getElementById("csmsForm"));
+    metrics = { view: {
+      kpis: latestCsmsPayload.kpis,
+      periods: latestCsmsPayload.periods,
+      operational_health: latestCsmsPayload.operational_health,
+      narratives: latestCsmsPayload.narratives,
+      charts: latestCsmsPayload.charts,
+      elapsed_time_sentence: latestCsmsPayload.elapsed_time_sentence,
+    }, trend: {
+      backlog: latestCsmsPayload.kpis?.backlog?.period2,
+      new_created: latestCsmsPayload.kpis?.new_created?.period2,
+      resolved: latestCsmsPayload.kpis?.resolved?.period2,
+    }};
+  } else if (reportUiKey === "legacy") {
+    if (!latestLegacyPayload) { alert("Refresh the legacy dashboard first."); return; }
+    params = formToObject(document.getElementById("exportForm"));
+    metrics = { view: {
+      kpis: latestLegacyPayload.kpis,
+      charts: latestLegacyPayload.charts,
+      insights: latestLegacyPayload.insights,
+      warnings: latestLegacyPayload.warnings,
+    }, trend: {
+      issue_count: latestLegacyPayload.kpis?.issue_count,
+      transition_count: latestLegacyPayload.kpis?.transition_count,
+      comment_count: latestLegacyPayload.kpis?.comment_count,
+      date_window_days: latestLegacyPayload.kpis?.date_window_days,
+    }};
+  } else {
+    const savePayload = buildOpsSavePayload();
+    if (!savePayload.members.length) { alert("Refresh team members before saving."); return; }
+    params = teamFormToObject();
+    delete params.assignee_username;
+    delete params.member_name;
+    const boardTrend = {};
+    for (const k of ["pipeline_backlog_count","closed_cssd_csd_team_count","queue_backlog_count","in_progress_count","resolved_in_period_count","sla_breach_count","open_near_sla_breach_8h_count"]) {
+      if (savePayload.board[k] != null) boardTrend[k] = savePayload.board[k];
+    }
+    metrics = {
+      view: { board: savePayload.board, members: savePayload.members },
+      trend: {
+        board: boardTrend,
+        members: savePayload.members.map((m) => ({ username: m.username, name: m.name, metrics: m.metrics })),
+      },
+    };
+  }
+  const res = await fetch("/snapshots", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ report_id: reportId, metrics, params, note }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.error || "Save failed");
+    return;
+  }
+  const selectId = reportUiKey === "csms" ? "csmsSnapshotSelect" : reportUiKey === "team" ? "teamSnapshotSelect" : "legacySnapshotSelect";
+  await loadSnapshotOptions(reportId, document.getElementById(selectId));
+  const sel = document.getElementById(selectId);
+  if (sel && data.id) sel.value = String(data.id);
+  await applySnapshotSelection(reportUiKey);
+}
+
 function setActiveReport(report) {
   document.querySelectorAll(".report-scope-csms").forEach((el) => { el.hidden = report !== "csms"; });
   document.querySelectorAll(".report-scope-team").forEach((el) => { el.hidden = report !== "team"; });
@@ -1481,8 +2099,15 @@ function setActiveReport(report) {
     btn.classList.toggle("active", btn.getAttribute("data-report") === report);
   });
   window.scrollTo({ top: 0, behavior: "smooth" });
-  if (report === "team") updateTeamReportPeriodLabel();
-  if (report === "legacy") updateLegacyReportPeriodLabel();
+  if (report === "team") {
+    updateTeamReportPeriodLabel();
+    initReportSnapshots("team");
+  }
+  if (report === "legacy") {
+    updateLegacyReportPeriodLabel();
+    initReportSnapshots("legacy");
+  }
+  if (report === "csms") initReportSnapshots("csms");
 }
 
 document.querySelectorAll(".report-tab").forEach((btn) => {
@@ -1656,6 +2281,7 @@ async function refreshLegacyDashboard(payload) {
     document.getElementById("legacyInsights").textContent = JSON.stringify(data, null, 2);
     return;
   }
+  latestLegacyPayload = data;
   renderLegacyKpis(data.kpis || {});
   renderLegacyCharts(data.charts || {});
   renderLegacyStatusSummary(data.charts || {});
@@ -1911,6 +2537,38 @@ renderCsmsKpis({
 document.getElementById("csmsElapsed").textContent = "Provide Last Report Timestamp and run CSMS refresh to compute elapsed time.";
 renderCsmsHealth({ process_alignment_pct: 60, process_gap_identified: "Pending run" });
 renderLegacyKpis({ issue_count: 0, transition_count: 0, comment_count: 0, date_window_days: 0 });
+
+["csmsSnapshotSelect", "teamSnapshotSelect", "legacySnapshotSelect"].forEach((id) => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const key = id.startsWith("csms") ? "csms" : id.startsWith("team") ? "team" : "legacy";
+  el.addEventListener("change", () => applySnapshotSelection(key));
+});
+document.getElementById("csmsSaveSnapshotBtn")?.addEventListener("click", () => saveReportSnapshot("csms"));
+document.getElementById("teamSaveSnapshotBtn")?.addEventListener("click", () => saveReportSnapshot("team"));
+document.getElementById("legacySaveSnapshotBtn")?.addEventListener("click", () => saveReportSnapshot("legacy"));
+document.getElementById("teamBaselineSaveBtn")?.addEventListener("click", async () => {
+  const metric_key = (document.getElementById("teamBaselineMetric")?.value || "").trim();
+  const value = document.getElementById("teamBaselineValue")?.value;
+  if (!metric_key || value === "") { alert("Enter metric_key and value."); return; }
+  const member = activeTeamMember();
+  const scope = document.querySelector(`#teamMetricsGrid .team-metric-card[data-metric-key="${metric_key}"]`);
+  const isMember = scope && scope.getAttribute("data-metric-scope") === "member";
+  await fetch("/manual-baselines", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      report_id: "ops",
+      metric_key,
+      value: Number(value),
+      member_username: isMember && member ? member.username : null,
+    }),
+  });
+  if (snapshotViewMode.team === "live") await refreshOpsMetricTrends(null, "live");
+  else if (activeSnapshotId.ops) await refreshOpsMetricTrends(activeSnapshotId.ops, "archive");
+});
+
+initReportSnapshots("csms");
 </script>
 </body>
 </html>
@@ -2916,6 +3574,67 @@ def issue_status_matches_keywords(issue: Dict[str, Any], keywords: Iterable[str]
     return any(k in status for k in wanted)
 
 
+def is_team_ops_closed_issue(issue: Dict[str, Any], _project_rules: Optional[Dict[str, str]] = None) -> bool:
+    """CSSD/CSD tickets whose Jira status is Closed (not RFPU or other done states)."""
+    project_key = get_issue_project_key(issue)
+    if project_key not in TEAM_OPS_CLOSED_PROJECT_KEYS:
+        return False
+    status = (get_issue_status(issue) or "").strip().lower()
+    return status == "closed"
+
+
+def count_closed_cssd_csd_combined_for_member(
+    issues: List[Dict[str, Any]],
+    assignee_username: str,
+    csd_assigned_dev_field: str,
+    project_rules: Dict[str, str],
+) -> int:
+    """CSSD/CSD in closed/done status where member owns the ticket or contributed a status change."""
+    target = (assignee_username or "").strip().lower()
+    if not target:
+        return 0
+    count = 0
+    for issue in issues:
+        if get_issue_project_key(issue) not in TEAM_OPS_CLOSED_PROJECT_KEYS:
+            continue
+        if not is_team_ops_closed_issue(issue, project_rules):
+            continue
+        owned = issue_owner_username(issue, csd_assigned_dev_field) == target
+        if owned:
+            count += 1
+            continue
+        if member_has_status_change(issue, target):
+            count += 1
+    return count
+
+
+def count_closed_cssd_csd_team_deduped(
+    issues: List[Dict[str, Any]],
+    member_usernames: Iterable[str],
+    csd_assigned_dev_field: str,
+    project_rules: Dict[str, str],
+) -> int:
+    """Unique CSSD/CSD closed/done tickets any roster member owns or contributed to."""
+    targets = {(u or "").strip().lower() for u in member_usernames if (u or "").strip()}
+    if not targets:
+        return 0
+    seen: set = set()
+    for issue in issues:
+        if get_issue_project_key(issue) not in TEAM_OPS_CLOSED_PROJECT_KEYS:
+            continue
+        if not is_team_ops_closed_issue(issue, project_rules):
+            continue
+        issue_key = issue.get("key")
+        if not issue_key or issue_key in seen:
+            continue
+        for target in targets:
+            owned = issue_owner_username(issue, csd_assigned_dev_field) == target
+            if owned or member_has_status_change(issue, target):
+                seen.add(issue_key)
+                break
+    return len(seen)
+
+
 def count_resolved_contributed_for_member(
     issues: List[Dict[str, Any]],
     assignee_username: str,
@@ -3197,6 +3916,30 @@ def is_issue_open_for_project(issue: Dict[str, Any], project_rules: Dict[str, st
     return status != final_status
 
 
+def is_owned_assigned_open_cssd_csd(issue: Dict[str, Any], project_rules: Dict[str, str]) -> bool:
+    """Owned CSSD/CSD still open: CSSD not Resolved/Closed; CSD not Ready For Production Users."""
+    del project_rules
+    project_key = get_issue_project_key(issue)
+    if project_key not in TEAM_OPS_CLOSED_PROJECT_KEYS:
+        return False
+    status = (get_issue_status(issue) or "").strip().lower()
+    if not status:
+        return False
+    if project_key == "CSSD":
+        if status == "closed" or status == "resolved":
+            return False
+        if "resolved" in status:
+            return False
+        return True
+    if project_key == "CSD":
+        return status != "ready for production users"
+    return False
+
+
+def count_owned_assigned_open_cssd_csd(owned_issues: List[Dict[str, Any]], project_rules: Dict[str, str]) -> int:
+    return sum(1 for issue in owned_issues if is_owned_assigned_open_cssd_csd(issue, project_rules))
+
+
 def is_queue_backlog_issue(issue: Dict[str, Any], project_rules: Dict[str, str]) -> bool:
     """CSSD: Under QA Analysis. CSD: New. Other projects: not counted."""
     project_key = get_issue_project_key(issue)
@@ -3237,6 +3980,56 @@ def count_owned_queue_backlog(owned_issues: List[Dict[str, Any]], project_rules:
 
 def count_owned_in_progress(owned_issues: List[Dict[str, Any]], project_rules: Dict[str, str]) -> int:
     return sum(1 for issue in owned_issues if is_in_progress_issue(issue, project_rules))
+
+
+def is_unassigned_issue(issue: Dict[str, Any]) -> bool:
+    return not issue_current_assignee_username(issue)
+
+
+def is_pipeline_backlog_issue(issue: Dict[str, Any], project_rules: Dict[str, str]) -> bool:
+    """CSSD Under QA Analysis or CSD New, with no Jira assignee."""
+    return is_queue_backlog_issue(issue, project_rules) and is_unassigned_issue(issue)
+
+
+def count_pipeline_backlog(issues: List[Dict[str, Any]], project_rules: Dict[str, str]) -> int:
+    return sum(1 for issue in issues if is_pipeline_backlog_issue(issue, project_rules))
+
+
+def build_team_board_metrics_payload(params: Dict[str, Any]) -> Dict[str, Any]:
+    base_url = (params.get("base_url") or "").strip()
+    if not base_url:
+        raise ValueError("base_url is required")
+    page_size = int(params.get("page_size") or 50)
+    max_issues = int(params.get("max_issues") or 0)
+    verify_ssl = bool(params.get("verify_ssl", True))
+    project_rules = {"CSSD": "Closed", "CSD": "Ready For Production Users"}
+    jql = build_team_posture_jql(params, "", include_assignee=False)
+    warnings: List[str] = []
+    try:
+        issues = fetch_jira_issues(base_url, jql, page_size, max_issues, verify_ssl, include_changelog=False)
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        if status_code == 500:
+            issues = fetch_jira_issues(base_url, jql, page_size, max_issues, verify_ssl, include_changelog=False)
+            warnings.append("Board metrics loaded without changelog expansion.")
+        else:
+            raise
+    csd_assigned_dev_field = (params.get("csd_assigned_dev_field") or "customfield_14700").strip()
+    member_usernames = params.get("member_usernames") or []
+    if isinstance(member_usernames, str):
+        member_usernames = parse_csv_list(member_usernames)
+    board_metrics: Dict[str, Any] = {
+        "pipeline_backlog_count": count_pipeline_backlog(issues, project_rules),
+    }
+    if member_usernames:
+        board_metrics["closed_cssd_csd_team_count"] = count_closed_cssd_csd_team_deduped(
+            issues, member_usernames, csd_assigned_dev_field, project_rules
+        )
+    return {
+        "jql": jql,
+        "warnings": warnings,
+        "board_metrics": board_metrics,
+    }
 
 
 def issue_has_member_status_change_after(
@@ -3491,22 +4284,17 @@ def build_member_dashboard_tagged_rows(
     # Use the same ownership/scope logic as Team posture cards.
     owned_issues = issues_owned_by_member(broad_issues, assignee_username, csd_assigned_dev_field)
     member_scope_issues = issues_in_member_scope(broad_issues, assignee_username, csd_assigned_dev_field)
-    open_owned_issues = get_open_issues(owned_issues, project_rules)
-
     tags_by_key: Dict[str, set] = {}
 
-    # Assigned open CSSD/CSD/general tags.
-    for issue in open_owned_issues:
+    # Assigned open: CSSD/CSD only (not Closed / not Ready For Production Users).
+    for issue in owned_issues:
+        if not is_owned_assigned_open_cssd_csd(issue, project_rules):
+            continue
         key = str(issue.get("key") or "").strip()
         if not key:
             continue
         project_key = get_issue_project_key(issue)
-        if project_key == "CSSD":
-            tag = "assigned_open_cssd"
-        elif project_key == "CSD":
-            tag = "assigned_open_csd"
-        else:
-            tag = "assigned_open"
+        tag = "assigned_open_cssd" if project_key == "CSSD" else "assigned_open_csd"
         tags_by_key.setdefault(key, set()).add(tag)
 
     # Reopened tag using the same predicate as reopened card.
@@ -3607,7 +4395,7 @@ def build_team_posture_payload(params: Dict[str, Any]) -> Dict[str, Any]:
     resolved_contributed_count = count_resolved_contributed_for_member(
         broad_issues, assignee_username, csd_assigned_dev_field, TEAM_POSTURE_RESOLVED_STATUS_KEYWORDS
     )
-    open_count = get_backlog_count(owned_issues, project_rules)
+    open_count = count_owned_assigned_open_cssd_csd(owned_issues, project_rules)
     oldest_open = get_oldest_open_ticket(owned_issues, project_rules)
     reopened_count = count_reopened_for_member(broad_issues, assignee_username, project_rules, csd_assigned_dev_field)
     worked_on_assigned_others_count = count_worked_on_assigned_to_others(broad_issues, assignee_username, csd_assigned_dev_field)
@@ -3629,6 +4417,9 @@ def build_team_posture_payload(params: Dict[str, Any]) -> Dict[str, Any]:
         TEAM_POSTURE_RESOLVED_STATUS_KEYWORDS,
         report_start,
         report_end,
+    )
+    closed_cssd_csd_count = count_closed_cssd_csd_combined_for_member(
+        broad_issues, assignee_username, csd_assigned_dev_field, project_rules
     )
     raw_rows = build_member_dashboard_tagged_rows(
         broad_issues,
@@ -3657,6 +4448,7 @@ def build_team_posture_payload(params: Dict[str, Any]) -> Dict[str, Any]:
             "worked_status_last_8h_count": worked_status_last_8h_count,
             "worked_status_last_8h_assigned_others_count": worked_status_last_8h_assigned_others_count,
             "resolved_in_period_count": resolved_in_period_count,
+            "closed_cssd_csd_count": closed_cssd_csd_count,
             "sla_breach_count": sla_metrics["sla_breach_count"],
             "open_near_sla_breach_8h_count": sla_metrics["open_near_sla_breach_8h_count"],
         },
@@ -3985,6 +4777,145 @@ def download():
     if not path:
         return Response("Missing path", status=400)
     return send_file(path, as_attachment=True)
+
+
+@app.route("/run-team-board-metrics", methods=["POST"])
+def run_team_board_metrics():
+    try:
+        payload = build_team_board_metrics_payload(request.get_json(force=True))
+        return jsonify(payload)
+    except requests.HTTPError as exc:
+        details = exc.response.text if exc.response is not None else str(exc)
+        return jsonify({"error": f"HTTP error: {exc}", "details": details}), 400
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/snapshots/list-options", methods=["GET"])
+def snapshots_list_options():
+    report_id = (request.args.get("report_id") or "").strip()
+    if not report_id:
+        return jsonify({"error": "report_id required"}), 400
+    return jsonify(snap_db.list_snapshot_options(report_id))
+
+
+@app.route("/snapshots/<int:snapshot_id>", methods=["GET"])
+def snapshots_get(snapshot_id: int):
+    snap = snap_db.get_snapshot(snapshot_id)
+    if not snap:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(snap)
+
+
+@app.route("/snapshots/<int:snapshot_id>/display", methods=["GET"])
+def snapshots_display(snapshot_id: int):
+    display = snap_db.snapshot_to_display(snapshot_id)
+    if not display:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(display)
+
+
+@app.route("/snapshots", methods=["GET", "POST"])
+def snapshots_collection():
+    if request.method == "GET":
+        report_id = (request.args.get("report_id") or "").strip()
+        if not report_id:
+            return jsonify({"error": "report_id required"}), 400
+        rows = snap_db.list_snapshots(
+            report_id,
+            from_iso=request.args.get("from"),
+            to_iso=request.args.get("to"),
+            limit=int(request.args.get("limit") or 500),
+        )
+        return jsonify({"snapshots": rows})
+
+    body = request.get_json(force=True)
+    report_id = (body.get("report_id") or "").strip()
+    metrics = body.get("metrics")
+    if not report_id or not isinstance(metrics, dict):
+        return jsonify({"error": "report_id and metrics required"}), 400
+    try:
+        snap_id = snap_db.save_snapshot(
+            report_id,
+            metrics,
+            params=body.get("params"),
+            note=body.get("note"),
+        )
+        return jsonify({"id": snap_id, "report_id": report_id})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/snapshots/compare", methods=["GET"])
+def snapshots_compare():
+    report_id = (request.args.get("report_id") or "").strip()
+    snapshot_id = request.args.get("snapshot_id")
+    if not report_id or not snapshot_id:
+        return jsonify({"error": "report_id and snapshot_id required"}), 400
+    member_username = (request.args.get("member_username") or "").strip() or None
+    result = snap_db.compare_snapshots(
+        report_id,
+        int(snapshot_id),
+        compare_to=request.args.get("compare_to") or "previous",
+        member_username=member_username,
+    )
+    if member_username and result.get("deltas"):
+        result["deltas"] = [d for d in result["deltas"] if d.get("member_username") == member_username or d.get("member_username") is None]
+    return jsonify(result)
+
+
+@app.route("/snapshots/compare-live", methods=["POST"])
+def snapshots_compare_live():
+    body = request.get_json(force=True)
+    report_id = (body.get("report_id") or "").strip()
+    metrics = body.get("metrics") or {}
+    member_username = (body.get("member_username") or "").strip() or None
+    if not report_id:
+        return jsonify({"error": "report_id required"}), 400
+    return jsonify(snap_db.compare_live_to_baseline(report_id, metrics, member_username=member_username))
+
+
+@app.route("/snapshots/trends", methods=["GET"])
+def snapshots_trends():
+    report_id = (request.args.get("report_id") or "").strip()
+    metric_key = (request.args.get("metric_key") or "").strip()
+    if not report_id or not metric_key:
+        return jsonify({"error": "report_id and metric_key required"}), 400
+    member_username = (request.args.get("member_username") or "").strip() or None
+    to_snapshot_id = request.args.get("to_snapshot_id")
+    return jsonify(
+        snap_db.build_trend_series(
+            report_id,
+            metric_key,
+            member_username=member_username,
+            to_snapshot_id=int(to_snapshot_id) if to_snapshot_id else None,
+        )
+    )
+
+
+@app.route("/manual-baselines", methods=["GET", "POST"])
+def manual_baselines():
+    if request.method == "GET":
+        report_id = (request.args.get("report_id") or "").strip()
+        if not report_id:
+            return jsonify({"error": "report_id required"}), 400
+        member_username = (request.args.get("member_username") or "").strip() or None
+        return jsonify({"baselines": snap_db.list_manual_baselines(report_id, member_username)})
+
+    body = request.get_json(force=True)
+    report_id = (body.get("report_id") or "").strip()
+    metric_key = (body.get("metric_key") or "").strip()
+    value = body.get("value")
+    if not report_id or not metric_key or value is None:
+        return jsonify({"error": "report_id, metric_key, and value required"}), 400
+    snap_db.upsert_manual_baseline(
+        report_id,
+        metric_key,
+        float(value),
+        note=body.get("note"),
+        member_username=(body.get("member_username") or "").strip() or None,
+    )
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":

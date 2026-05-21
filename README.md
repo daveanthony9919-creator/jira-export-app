@@ -36,6 +36,27 @@ Default dev URL: `http://127.0.0.1:5001`
 | `GET` | `/download?path=...` | Legacy export file download (server-side path). |
 | `GET` | `/download-csms-export?export_id=&kind=` | Cached CSMS export (`csv_zip`, `excel`, `pdf`). |
 | `GET` | `/download-team-posture-export?export_id=&kind=` | Cached team export (`csv`, `excel`). |
+| `POST` | `/run-team-board-metrics` | Board-level metrics (e.g. **Pipeline Backlog** — unassigned CSSD Under QA Analysis + unassigned CSD New). |
+| `GET` | `/snapshots/list-options?report_id=` | Dropdown options for official saved reports (`exec`, `ops`, `legacy`). |
+| `GET` | `/snapshots/<id>/display` | Hydrate dashboard from a saved snapshot (no Jira). |
+| `POST` | `/snapshots` | Manually save an official report snapshot. |
+| `GET` | `/snapshots/compare?report_id=&snapshot_id=` | Between-report metric deltas vs previous snapshot or manual baseline. |
+| `POST` | `/snapshots/compare-live` | Compare current live metrics to last snapshot / manual baseline. |
+| `GET` | `/snapshots/trends?report_id=&metric_key=` | Time series for per-card sparklines on Operations Team. |
+| `POST` / `GET` | `/manual-baselines` | Manual comparison fallback values when no prior snapshot exists. |
+
+---
+
+## Official report snapshots (`data/snapshots.db`)
+
+SQLite database (stdlib only) stores **manually saved** dashboard runs. Refreshing from Jira does **not** auto-save.
+
+- **Archive mode:** On tab open, the latest official snapshot loads so KPIs/cards work without Jira.
+- **Report dropdown:** Select any past save or switch to **Live** to refresh from Jira.
+- **Operations Team cards:** Each metric card shows a delta vs the prior official report (or manual baseline) and a sparkline over saved runs.
+- **Pipeline Backlog:** Board card counts tickets in CSSD **Under QA Analysis** or CSD **New** with **no assignee** (distinct from per-member Queue Backlog).
+
+Backup `jira_export_app/data/snapshots.db` with the app folder. The file is gitignored by default.
 
 ---
 
@@ -76,7 +97,7 @@ End-to-end Jira Search with changelog expansion, producing:
   - **Resolved (Owned)** — owned tickets whose status matches resolved-style rollups (e.g. resolved, closed, ready for production users, completed, duplicate, dev-completed).  
   - **Resolved (Last 8 Hours)** — owned tickets resolved within the last 8 hours.  
   - **Resolved (Contributed)** — same status rollups, member authored ≥1 **status** changelog transition, **not** current owner.  
-  - **Assigned Open** — open by project-specific final status.  
+  - **Assigned Open** — owned CSSD/CSD only: CSSD not Resolved/Closed; CSD not Ready For Production Users.  
   - **Reopened** — current status name contains `reopened` / `re-opened` / `re opened`, and member is owner **or** (not owner but has status transitions as author).  
   - **Worked On (Assigned to Others)** — status-change author is member; current owner ≠ member.  
   - **SLA Breach Count** — **24h from `created`:** open tickets past 24h; closed tickets prefer Jira **Resolution SLA Breached**-style custom field (discovered via `/rest/api/2/field`), else fallback elapsed created → resolutiondate (or updated). Counts include relevant open + closed breaches in member scope.  
