@@ -29,7 +29,7 @@ Default dev URL: `http://127.0.0.1:5001`
 | `POST` | `/preview-jql` | Returns built JQL for the legacy export form. |
 | `POST` | `/run-export` | Runs full legacy export; returns paths + download links. |
 | `POST` | `/run-csms-exec-summary` | CSMS executive payload + optional CSV ZIP / Excel / PDF exports. |
-| `POST` | `/run-legacy-dashboard` | Legacy trends + chart data (JSON). |
+| `POST` | `/run-legacy-dashboard` | Ticket trend: charts + KPIs including TTFR/TTR CSSD/CSD (configurable median, mean, or p90). |
 | `POST` | `/run-team-posture` | Team posture JSON for one member; includes `jql`, `broad_jql`, `metrics`, `warnings`, exports. |
 | `POST` | `/run-team-posture-board-export` | Team board export for all submitted members; includes dashboard-bucket tagging rows for matched tickets. |
 | `POST` | `/auth-status` | Auth / visibility diagnostics JSON. |
@@ -60,6 +60,39 @@ SQLite database (stdlib only) stores **manually saved** dashboard runs. Refreshi
 - **Team Closed:** CSSD/CSD issues in **Closed** status (optional `updated` window from Team Start/End), capped fetch with changelog for roster attribution.
 
 Backup `jira_export_app/data/snapshots.db` with the app folder. The file is gitignored by default.
+
+---
+
+## Ticket trend (Legacy dashboard tab)
+
+Open **Ticket trend** in the sidebar, then **Show Report Variables & Settings** → **Refresh Dashboard**.
+
+### KPI cards
+
+| Card | Source | Default status gate | Default aggregate |
+|------|--------|---------------------|-------------------|
+| **TTFR CSSD** | `customfield_10318` per CSSD ticket | *(blank = any ticket with TTFR SLA)* | Median |
+| **TTFR CSD** | Linked **CSSD** `customfield_10318` if `issuelinks` to `CSSD-*`; else CSD SLA | *(blank)* | Median |
+| **TTR CSSD** | `customfield_10317`, else `resolutiondate − created` | `Closed` | Median |
+| **TTR CSD** | Same as TTR CSSD on CSD tickets | `Ready For Production Users` | Median |
+
+Card subtitle shows the chosen aggregate and ticket count (e.g. `mean · 42 ticket(s)`). Saved snapshots store the numeric rollup under `ttfr_*_median_hours` / `ttr_*_median_hours` regardless of aggregate name.
+
+### Report settings (SLA section)
+
+**Status gates** (comma-separated Jira status names; filter which tickets enter each rollup):
+
+- `ttr_status_cssd`, `ttr_status_csd`, `ttfr_status_cssd`, `ttfr_status_csd`
+
+**Aggregates** (how to combine per-ticket hours into one card value):
+
+- `ttfr_cssd_aggregate`, `ttfr_csd_aggregate`, `ttr_cssd_aggregate`, `ttr_csd_aggregate` — `median`, `mean`, or `p90`
+
+**JQL scope:** Same as the export form (projects, dates, filters). Include **CSSD** and **CSD** in projects for SLA cards to populate.
+
+### Snapshots
+
+Official report id `legacy`. Trend keys include the four SLA hour metrics for compare-over-time when you save snapshots.
 
 ---
 

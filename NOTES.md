@@ -1,5 +1,14 @@
 # CSMS Reporting Notes
 
+## 2026-05-20
+
+- **Ticket trend SLA KPIs:** Four cards (TTFR/TTR × CSSD/CSD) on **Refresh Dashboard** (`POST /run-legacy-dashboard`).
+- **Status gates:** `ttr_status_cssd` (default Closed), `ttr_status_csd` (default Ready For Production Users), `ttfr_status_*` optional.
+- **Aggregates:** Per-card dropdowns `*_aggregate` — `median` (default), `mean`, `p90`.
+- **TTR rule:** `customfield_10317` elapsed, else `resolutiondate − created`, only for tickets in the TTR status gate.
+- **TTFR CSD:** Uses linked CSSD ticket’s `customfield_10318` when `issuelinks` point to CSSD; otherwise CSD’s own SLA field.
+- **Snapshots:** `LEGACY_TREND_KEYS` extended with the four SLA hour metrics; aggregate choice stored in snapshot `params`.
+
 ## 2026-05-19
 
 - **Pipeline Backlog:** Count uses Jira search `total` (`POST /run-pipeline-backlog-count`), not full issue pagination. Refresh loads pipeline before Team Closed (`POST /run-team-board-metrics` with `skip_pipeline: true` for closed-only).

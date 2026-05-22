@@ -46,7 +46,16 @@ OPS_MEMBER_METRIC_KEYS = (
 )
 
 EXEC_TREND_KEYS = ("backlog", "new_created", "resolved")
-LEGACY_TREND_KEYS = ("issue_count", "transition_count", "comment_count", "date_window_days")
+LEGACY_TREND_KEYS = (
+    "issue_count",
+    "transition_count",
+    "comment_count",
+    "date_window_days",
+    "ttfr_cssd_median_hours",
+    "ttfr_csd_median_hours",
+    "ttr_cssd_median_hours",
+    "ttr_csd_median_hours",
+)
 
 
 def _utc_now_iso() -> str:

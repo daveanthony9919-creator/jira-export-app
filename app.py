@@ -53,6 +53,18 @@ TEAM_PIPELINE_BACKLOG_JQL_DEFAULT = (
 )
 TEAM_PIPELINE_BACKLOG_CREATED_SINCE_DEFAULT = "2021-11-08"
 
+# Jira SLA custom fields (legacy export + Ticket trend TTFR/TTR cards).
+JIRA_SLA_TTR_FIELD = "customfield_10317"
+JIRA_SLA_TTFR_FIELD = "customfield_10318"
+LEGACY_SLA_SEARCH_FIELDS = (
+    "project,status,created,updated,resolutiondate,issuetype,issuelinks,"
+    f"{JIRA_SLA_TTR_FIELD},{JIRA_SLA_TTFR_FIELD}"
+)
+DEFAULT_LEGACY_TTR_STATUS_CSSD = "Closed"
+DEFAULT_LEGACY_TTR_STATUS_CSD = "Ready For Production Users"
+DEFAULT_LEGACY_SLA_AGGREGATE = "median"
+LEGACY_SLA_AGGREGATE_OPTIONS = ("median", "mean", "p90")
+
 # Default Team tab roster when localStorage has no saved members.
 # "username" is the JQL assignee literal passed through assignee in ("...") (see build_team_posture_jql / jql_quote).
 # Use the same token your Jira accepts in Issue Navigator; swap for accountId or legacy username if needed.
@@ -1250,6 +1262,45 @@ HTML = """
             <div class="field"><label>Time Block End</label><input type="time" name="time_block_end" /></div>
             <div class="field"><label>Page Size</label><input type="number" name="page_size" value="50" min="1" max="100" /></div>
             <div class="field"><label>Max Issues (0 = all)</label><input type="number" name="max_issues" value="0" min="0" /></div>
+            <div class="field full" style="margin-top:12px;">
+              <h3 style="margin:0 0 8px;">SLA status gates (Ticket trend cards)</h3>
+              <p class="small" style="margin:0 0 10px;color:var(--muted);">Comma-separated Jira status names. TTR uses customfield_10317 or resolutiondate − created. TTFR uses customfield_10318; CSD can inherit from linked CSSD.</p>
+            </div>
+            <div class="field"><label>TTR CSSD status</label><input name="ttr_status_cssd" value="Closed" title="Only CSSD tickets in these statuses count toward TTR CSSD." /></div>
+            <div class="field"><label>TTR CSD status</label><input name="ttr_status_csd" value="Ready For Production Users" title="Only CSD tickets in these statuses count toward TTR CSD." /></div>
+            <div class="field"><label>TTFR CSSD status</label><input name="ttfr_status_cssd" placeholder="Blank = any with TTFR SLA" title="Leave blank to include any CSSD ticket with Time to First Response SLA data." /></div>
+            <div class="field"><label>TTFR CSD status</label><input name="ttfr_status_csd" placeholder="Blank = linked CSSD or own SLA" title="Leave blank for linked CSSD TTFR or CSD own SLA when no link." /></div>
+            <div class="field full" style="margin-top:8px;">
+              <p class="small" style="margin:0 0 8px;color:var(--muted);">Rollup across matching tickets: median (typical), mean (average), or 90th percentile.</p>
+            </div>
+            <div class="field"><label>TTFR CSSD aggregate</label>
+              <select name="ttfr_cssd_aggregate" title="How to combine TTFR CSSD ticket hours into one card value.">
+                <option value="median" selected>Median</option>
+                <option value="mean">Mean (average)</option>
+                <option value="p90">90th percentile</option>
+              </select>
+            </div>
+            <div class="field"><label>TTFR CSD aggregate</label>
+              <select name="ttfr_csd_aggregate">
+                <option value="median" selected>Median</option>
+                <option value="mean">Mean (average)</option>
+                <option value="p90">90th percentile</option>
+              </select>
+            </div>
+            <div class="field"><label>TTR CSSD aggregate</label>
+              <select name="ttr_cssd_aggregate">
+                <option value="median" selected>Median</option>
+                <option value="mean">Mean (average)</option>
+                <option value="p90">90th percentile</option>
+              </select>
+            </div>
+            <div class="field"><label>TTR CSD aggregate</label>
+              <select name="ttr_csd_aggregate">
+                <option value="median" selected>Median</option>
+                <option value="mean">Mean (average)</option>
+                <option value="p90">90th percentile</option>
+              </select>
+            </div>
             <div class="field full"><label>Extra JQL (AND appended)</label><textarea name="extra_jql" placeholder='Example: component = "Establishment" AND priority = Medium'></textarea></div>
             <div class="field full"><label>Custom JQL Override (optional)</label><textarea name="custom_jql" placeholder='Example: issuekey = CSSD-123'></textarea></div>
             <div class="field full">
@@ -1337,9 +1388,18 @@ HTML = """
             </ul>
           </div>
           <div class="notes-card">
+            <h3>Ticket Trend SLA Cards</h3>
+            <ul>
+              <li><strong>TTFR / TTR CSSD &amp; CSD:</strong> Configure status gates and aggregate (median, mean, or 90th percentile) under Report Settings, then <strong>Refresh Dashboard</strong>.</li>
+              <li><strong>TTR:</strong> Jira Time to Resolution SLA (<code>customfield_10317</code>) or resolution date minus created; only tickets in your TTR status list.</li>
+              <li><strong>TTFR CSD:</strong> Uses linked CSSD first-response time when a CSSD link exists.</li>
+            </ul>
+          </div>
+          <div class="notes-card">
             <h3>How To Use</h3>
             <ul>
               <li>Open <strong>Team Posture Variables &amp; Settings</strong> for filters, roster, <strong>Refresh from Jira</strong>, and <strong>Refresh selected member</strong>.</li>
+              <li>Open <strong>Report Variables &amp; Settings</strong> on Ticket trend for JQL, SLA gates, aggregates, and <strong>Refresh Dashboard</strong>.</li>
               <li>Choose an <strong>Official report</strong> snapshot or <strong>Live</strong>; Live still requires refresh to pull Jira.</li>
               <li>Use <strong>Save snapshot</strong> to store an official report in SQLite (refresh does not auto-save).</li>
               <li>Use Team member icons to switch per-member metrics.</li>
@@ -2921,6 +2981,10 @@ async function saveReportSnapshot(reportUiKey) {
       transition_count: latestLegacyPayload.kpis?.transition_count,
       comment_count: latestLegacyPayload.kpis?.comment_count,
       date_window_days: latestLegacyPayload.kpis?.date_window_days,
+      ttfr_cssd_median_hours: latestLegacyPayload.kpis?.ttfr_cssd_median_hours,
+      ttfr_csd_median_hours: latestLegacyPayload.kpis?.ttfr_csd_median_hours,
+      ttr_cssd_median_hours: latestLegacyPayload.kpis?.ttr_cssd_median_hours,
+      ttr_csd_median_hours: latestLegacyPayload.kpis?.ttr_csd_median_hours,
     }};
   } else {
     const savePayload = buildOpsSavePayload();
@@ -3115,21 +3179,49 @@ const LEGACY_KPI_TITLES = [
   "Total status changes counted across those issues.",
   "Total comments counted on those issues.",
   "Number of calendar days in this result set that have at least one created ticket.",
+  "TTFR CSSD: rollup of per-ticket hours (aggregate chosen in settings).",
+  "TTFR CSD: linked CSSD SLA when present, else CSD customfield_10318.",
+  "TTR CSSD: customfield_10317 else resolutiondate − created, for tickets in TTR status gate.",
+  "TTR CSD: customfield_10317 else resolutiondate − created, for tickets in TTR status gate.",
 ];
+
+function legacySlaAggregateLabel(method) {
+  const m = (method || "median").toLowerCase();
+  if (m === "mean") return "mean";
+  if (m === "p90") return "p90";
+  return "median";
+}
+
+function formatLegacySlaHours(hours) {
+  if (hours == null || Number.isNaN(Number(hours))) return "--";
+  const h = Number(hours);
+  if (h < 48) return `${h.toFixed(1)}h`;
+  return `${(h / 24).toFixed(1)}d`;
+}
 
 function renderLegacyKpis(kpis) {
   const container = document.getElementById("legacyKpis");
   if (!container) return;
+  const slaSub = (count, aggregate) => {
+    const agg = legacySlaAggregateLabel(aggregate);
+    const n = count != null && count > 0 ? `${count} ticket(s)` : "no matching tickets";
+    return `${agg} · ${n}`;
+  };
   const cards = [
-    ["Issue Count", kpis.issue_count || 0],
-    ["Status Transitions", kpis.transition_count || 0],
-    ["Comment Volume", kpis.comment_count || 0],
-    ["Date Window Days", kpis.date_window_days || 0],
+    ["Issue Count", kpis.issue_count || 0, null],
+    ["Status Transitions", kpis.transition_count || 0, null],
+    ["Comment Volume", kpis.comment_count || 0, null],
+    ["Date Window Days", kpis.date_window_days || 0, null],
+    ["TTFR CSSD", formatLegacySlaHours(kpis.ttfr_cssd_median_hours), slaSub(kpis.ttfr_cssd_count, kpis.ttfr_cssd_aggregate)],
+    ["TTFR CSD", formatLegacySlaHours(kpis.ttfr_csd_median_hours), slaSub(kpis.ttfr_csd_count, kpis.ttfr_csd_aggregate)],
+    ["TTR CSSD", formatLegacySlaHours(kpis.ttr_cssd_median_hours), slaSub(kpis.ttr_cssd_count, kpis.ttr_cssd_aggregate)],
+    ["TTR CSD", formatLegacySlaHours(kpis.ttr_csd_median_hours), slaSub(kpis.ttr_csd_count, kpis.ttr_csd_aggregate)],
   ];
-  container.innerHTML = cards.map(([title, value], i) => `
+  container.innerHTML = cards.map(([title, value, sub], i) => `
     <div class="kpi-card" title="${LEGACY_KPI_TITLES[i] || ""}">
       <div>${title}</div>
       <div class="kpi-number">${value}</div>
+      ${sub ? `<div class="small" style="margin-top:4px;color:var(--muted);">${sub}</div>` : ""}
     </div>
   `).join("");
 }
@@ -3708,8 +3800,17 @@ def fetch_jira_issues(
     max_issues: int,
     verify_ssl: bool,
     include_changelog: bool = True,
+    fields: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    return fetch_issues(base_url, jql, page_size, max_issues, verify_ssl, include_changelog=include_changelog)
+    return fetch_issues(
+        base_url,
+        jql,
+        page_size,
+        max_issues,
+        verify_ssl,
+        include_changelog=include_changelog,
+        fields=fields,
+    )
 
 
 def get_issue_project_key(issue: Dict[str, Any]) -> str:
@@ -3932,6 +4033,266 @@ def extract_sla(fields: Dict[str, Any], key: str) -> Tuple[str, str, str]:
     return elapsed, breached, stop
 
 
+def parse_sla_elapsed_hours(fields: Dict[str, Any], field_key: str) -> Optional[float]:
+    """Parse Jira SLA completedCycles elapsed time to hours."""
+    data = fields.get(field_key) or {}
+    cycles = data.get("completedCycles") or []
+    if not cycles:
+        return None
+    cycle = cycles[0]
+    elapsed = cycle.get("elapsedTime") or {}
+    millis = elapsed.get("millis")
+    if millis is not None:
+        try:
+            return float(millis) / 3600000.0
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def parse_legacy_status_gate(value: Optional[str], default_when_empty: str) -> List[str]:
+    """Comma-separated status names; blank uses default_when_empty."""
+    text = (value or "").strip()
+    if not text:
+        text = default_when_empty
+    return [s.strip().lower() for s in parse_csv_list(text) if s.strip()]
+
+
+def issue_status_matches_gate(issue: Dict[str, Any], allowed_statuses: List[str]) -> bool:
+    if not allowed_statuses:
+        return True
+    status = (get_issue_status(issue) or "").strip().lower()
+    return status in allowed_statuses
+
+
+def ttfr_hours_from_fields(fields: Dict[str, Any]) -> Optional[float]:
+    hours = parse_sla_elapsed_hours(fields, JIRA_SLA_TTFR_FIELD)
+    if hours is not None:
+        return hours
+    _, _, stop = extract_sla(fields, JIRA_SLA_TTFR_FIELD)
+    if not stop:
+        return None
+    created_raw = fields.get("created") or ""
+    stop_dt = parse_jira_datetime(stop)
+    created_dt = parse_jira_datetime(created_raw)
+    if stop_dt and created_dt:
+        return (stop_dt - created_dt).total_seconds() / 3600.0
+    return None
+
+
+def ttr_hours_from_issue(issue: Dict[str, Any]) -> Optional[float]:
+    fields = issue.get("fields") or {}
+    hours = parse_sla_elapsed_hours(fields, JIRA_SLA_TTR_FIELD)
+    if hours is not None:
+        return hours
+    created_dt = get_issue_created_datetime(issue)
+    resolved_dt = parse_jira_datetime(fields.get("resolutiondate") or "")
+    if created_dt and resolved_dt:
+        return (resolved_dt - created_dt).total_seconds() / 3600.0
+    return None
+
+
+def find_linked_cssd_key(issue: Dict[str, Any]) -> Optional[str]:
+    for link in (issue.get("fields") or {}).get("issuelinks") or []:
+        for side in ("outwardIssue", "inwardIssue"):
+            other = link.get(side) or {}
+            key = (other.get("key") or "").strip().upper()
+            if key.startswith("CSSD-"):
+                return key
+    return None
+
+
+def fetch_issues_by_keys(
+    base_url: str,
+    keys: List[str],
+    verify_ssl: bool,
+    fields: str = LEGACY_SLA_SEARCH_FIELDS,
+) -> Dict[str, Dict[str, Any]]:
+    """Batch-fetch issues by key; returns map key -> issue."""
+    unique = sorted({k.strip().upper() for k in keys if (k or "").strip()})
+    if not unique:
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    chunk_size = 50
+    for i in range(0, len(unique), chunk_size):
+        chunk = unique[i : i + chunk_size]
+        jql = "key in (" + ", ".join(jql_quote(k) for k in chunk) + ")"
+        batch = fetch_issues(
+            base_url,
+            jql,
+            page_size=min(50, len(chunk)),
+            max_issues=len(chunk),
+            verify_ssl=verify_ssl,
+            include_changelog=False,
+            fields=fields,
+        )
+        for issue in batch:
+            key = (issue.get("key") or "").strip().upper()
+            if key:
+                out[key] = issue
+    return out
+
+
+def median_hours(values: List[float]) -> Optional[float]:
+    if not values:
+        return None
+    ordered = sorted(values)
+    n = len(ordered)
+    mid = n // 2
+    if n % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+def parse_legacy_aggregate(value: Optional[str], default: str = DEFAULT_LEGACY_SLA_AGGREGATE) -> str:
+    chosen = (value or default).strip().lower()
+    if chosen in LEGACY_SLA_AGGREGATE_OPTIONS:
+        return chosen
+    return DEFAULT_LEGACY_SLA_AGGREGATE
+
+
+def percentile_hours(values: List[float], percentile: float) -> Optional[float]:
+    if not values:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = (percentile / 100.0) * (len(ordered) - 1)
+    low = int(rank)
+    high = min(low + 1, len(ordered) - 1)
+    frac = rank - low
+    return ordered[low] * (1.0 - frac) + ordered[high] * frac
+
+
+def aggregate_hours(values: List[float], method: str) -> Optional[float]:
+    if not values:
+        return None
+    agg = parse_legacy_aggregate(method)
+    if agg == "mean":
+        return sum(values) / len(values)
+    if agg == "p90":
+        return percentile_hours(values, 90.0)
+    return median_hours(values)
+
+
+def legacy_aggregate_display_name(method: str) -> str:
+    agg = parse_legacy_aggregate(method)
+    if agg == "mean":
+        return "mean"
+    if agg == "p90":
+        return "90th percentile"
+    return "median"
+
+
+def compute_legacy_sla_kpis(
+    issues: List[Dict[str, Any]],
+    params: Dict[str, Any],
+    base_url: str,
+    verify_ssl: bool,
+) -> Tuple[Dict[str, Any], List[str]]:
+    """TTFR/TTR rollups for CSSD and CSD using configurable status gates and aggregates."""
+    warnings: List[str] = []
+    ttr_cssd_gate = parse_legacy_status_gate(
+        params.get("ttr_status_cssd"), DEFAULT_LEGACY_TTR_STATUS_CSSD
+    )
+    ttr_csd_gate = parse_legacy_status_gate(
+        params.get("ttr_status_csd"), DEFAULT_LEGACY_TTR_STATUS_CSD
+    )
+    ttfr_cssd_gate = parse_legacy_status_gate(params.get("ttfr_status_cssd"), "")
+    ttfr_csd_gate = parse_legacy_status_gate(params.get("ttfr_status_csd"), "")
+    ttfr_cssd_agg = parse_legacy_aggregate(params.get("ttfr_cssd_aggregate"))
+    ttfr_csd_agg = parse_legacy_aggregate(params.get("ttfr_csd_aggregate"))
+    ttr_cssd_agg = parse_legacy_aggregate(params.get("ttr_cssd_aggregate"))
+    ttr_csd_agg = parse_legacy_aggregate(params.get("ttr_csd_aggregate"))
+
+    csd_needing_cssd: List[str] = []
+    csd_issues: List[Dict[str, Any]] = []
+    for issue in issues:
+        if get_issue_project_key(issue) != "CSD":
+            continue
+        csd_issues.append(issue)
+        cssd_key = find_linked_cssd_key(issue)
+        if cssd_key:
+            csd_needing_cssd.append(cssd_key)
+
+    cssd_by_key = fetch_issues_by_keys(base_url, csd_needing_cssd, verify_ssl)
+
+    ttfr_cssd_hours: List[float] = []
+    ttfr_csd_hours: List[float] = []
+    ttr_cssd_hours: List[float] = []
+    ttr_csd_hours: List[float] = []
+    ttfr_csd_from_link = 0
+
+    for issue in issues:
+        project = get_issue_project_key(issue)
+        fields = issue.get("fields") or {}
+
+        if project == "CSSD":
+            if issue_status_matches_gate(issue, ttfr_cssd_gate):
+                hours = ttfr_hours_from_fields(fields)
+                if hours is not None:
+                    ttfr_cssd_hours.append(hours)
+            if issue_status_matches_gate(issue, ttr_cssd_gate):
+                hours = ttr_hours_from_issue(issue)
+                if hours is not None:
+                    ttr_cssd_hours.append(hours)
+
+        elif project == "CSD":
+            if issue_status_matches_gate(issue, ttfr_csd_gate):
+                hours = None
+                cssd_key = find_linked_cssd_key(issue)
+                if cssd_key and cssd_key in cssd_by_key:
+                    hours = ttfr_hours_from_fields(cssd_by_key[cssd_key].get("fields") or {})
+                    if hours is not None:
+                        ttfr_csd_from_link += 1
+                if hours is None:
+                    hours = ttfr_hours_from_fields(fields)
+                if hours is not None:
+                    ttfr_csd_hours.append(hours)
+            if issue_status_matches_gate(issue, ttr_csd_gate):
+                hours = ttr_hours_from_issue(issue)
+                if hours is not None:
+                    ttr_csd_hours.append(hours)
+
+    if csd_issues and not ttfr_csd_hours and csd_needing_cssd:
+        warnings.append(
+            "No CSD TTFR values: check linked CSSD tickets and TTFR CSD status gate."
+        )
+    if not ttfr_cssd_hours:
+        warnings.append(
+            "No CSSD TTFR values in this result set (status gate or missing customfield_10318)."
+        )
+
+    kpis = {
+        "ttfr_cssd_median_hours": aggregate_hours(ttfr_cssd_hours, ttfr_cssd_agg),
+        "ttfr_cssd_aggregate": ttfr_cssd_agg,
+        "ttfr_cssd_count": len(ttfr_cssd_hours),
+        "ttfr_csd_median_hours": aggregate_hours(ttfr_csd_hours, ttfr_csd_agg),
+        "ttfr_csd_aggregate": ttfr_csd_agg,
+        "ttfr_csd_count": len(ttfr_csd_hours),
+        "ttfr_csd_from_linked_cssd_count": ttfr_csd_from_link,
+        "ttr_cssd_median_hours": aggregate_hours(ttr_cssd_hours, ttr_cssd_agg),
+        "ttr_cssd_aggregate": ttr_cssd_agg,
+        "ttr_cssd_count": len(ttr_cssd_hours),
+        "ttr_csd_median_hours": aggregate_hours(ttr_csd_hours, ttr_csd_agg),
+        "ttr_csd_aggregate": ttr_csd_agg,
+        "ttr_csd_count": len(ttr_csd_hours),
+        "sla_status_gates": {
+            "ttr_cssd": ttr_cssd_gate,
+            "ttr_csd": ttr_csd_gate,
+            "ttfr_cssd": ttfr_cssd_gate or ["(any with TTFR SLA)"],
+            "ttfr_csd": ttfr_csd_gate or ["(linked CSSD or own SLA)"],
+        },
+        "sla_aggregates": {
+            "ttfr_cssd": ttfr_cssd_agg,
+            "ttfr_csd": ttfr_csd_agg,
+            "ttr_cssd": ttr_cssd_agg,
+            "ttr_csd": ttr_csd_agg,
+        },
+    }
+    return kpis, warnings
+
+
 def is_workflow_event(field_name: str) -> bool:
     return field_name.strip().lower() == "workflow"
 
@@ -3971,6 +4332,7 @@ def fetch_issues(
     max_issues: int,
     verify_ssl: bool,
     include_changelog: bool = True,
+    fields: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     issues: List[Dict[str, Any]] = []
     start_at = 0
@@ -3983,6 +4345,8 @@ def fetch_issues(
             "startAt": start_at,
             "maxResults": page_size,
         }
+        if fields:
+            payload["fields"] = fields
         if include_changelog:
             payload["expand"] = "changelog"
         resp = session.get(base_url, params=payload, auth=auth, verify=verify_ssl, timeout=60)
@@ -4416,21 +4780,37 @@ def build_legacy_dashboard_payload(params: Dict[str, Any]) -> Dict[str, Any]:
     block_end = parse_time_value(params.get("time_block_end"))
     jql = build_jql(params)
     warnings: List[str] = []
+    search_fields = LEGACY_SLA_SEARCH_FIELDS
     try:
         issues = fetch_jira_issues(
-            base_url, jql, page_size, max_issues, verify_ssl, include_changelog=True
+            base_url,
+            jql,
+            page_size,
+            max_issues,
+            verify_ssl,
+            include_changelog=True,
+            fields=search_fields,
         )
     except requests.HTTPError as exc:
         status_code = exc.response.status_code if exc.response is not None else None
         if status_code == 500:
             issues = fetch_jira_issues(
-                base_url, jql, page_size, max_issues, verify_ssl, include_changelog=False
+                base_url,
+                jql,
+                page_size,
+                max_issues,
+                verify_ssl,
+                include_changelog=False,
+                fields=search_fields,
             )
             warnings.append(
                 "Jira returned 500 with changelog expansion; loaded legacy dashboard without changelog details."
             )
         else:
             raise
+
+    sla_kpis, sla_warnings = compute_legacy_sla_kpis(issues, params, base_url, verify_ssl)
+    warnings.extend(sla_warnings)
 
     activity_rows: List[Dict[str, Any]] = []
     summary_rows: List[Dict[str, Any]] = []
@@ -4469,17 +4849,39 @@ def build_legacy_dashboard_payload(params: Dict[str, Any]) -> Dict[str, Any]:
         f"Average transitions per issue: {(total_transitions / max(1, len(issues))):.2f}.",
         f"Most common current status: {max(status_counts, key=status_counts.get) if status_counts else 'N/A'}.",
     ]
+    def _sla_insight(label: str, hours_key: str, count_key: str, agg_key: str, extra: str = "") -> str:
+        count = sla_kpis.get(count_key) or 0
+        agg_name = legacy_aggregate_display_name(sla_kpis.get(agg_key) or DEFAULT_LEGACY_SLA_AGGREGATE)
+        hours = sla_kpis.get(hours_key)
+        suffix = f" ({count} tickets{extra})."
+        if hours is None:
+            return f"{label} ({agg_name} n/a{suffix}"
+        return f"{label} {agg_name}: {hours:.1f}h{suffix}"
+
+    if sla_kpis.get("ttfr_cssd_count"):
+        insights.append(_sla_insight("TTFR CSSD", "ttfr_cssd_median_hours", "ttfr_cssd_count", "ttfr_cssd_aggregate"))
+    if sla_kpis.get("ttfr_csd_count"):
+        link_n = sla_kpis.get("ttfr_csd_from_linked_cssd_count") or 0
+        extra = f"; {link_n} from linked CSSD" if link_n else ""
+        insights.append(_sla_insight("TTFR CSD", "ttfr_csd_median_hours", "ttfr_csd_count", "ttfr_csd_aggregate", extra))
+    if sla_kpis.get("ttr_cssd_count"):
+        insights.append(_sla_insight("TTR CSSD", "ttr_cssd_median_hours", "ttr_cssd_count", "ttr_cssd_aggregate"))
+    if sla_kpis.get("ttr_csd_count"):
+        insights.append(_sla_insight("TTR CSD", "ttr_csd_median_hours", "ttr_csd_count", "ttr_csd_aggregate"))
+    insights = [line for line in insights if line]
 
     all_days = sorted(set(created_daily.keys()) | set(updated_daily.keys()) | set(resolved_daily.keys()))
+    kpis: Dict[str, Any] = {
+        "issue_count": len(issues),
+        "transition_count": total_transitions,
+        "comment_count": total_comments,
+        "date_window_days": len(created_daily),
+    }
+    kpis.update(sla_kpis)
     return {
         "jql": jql,
         "warnings": warnings,
-        "kpis": {
-            "issue_count": len(issues),
-            "transition_count": total_transitions,
-            "comment_count": total_comments,
-            "date_window_days": len(created_daily),
-        },
+        "kpis": kpis,
         "charts": {
             "status_distribution": status_counts,
             "issue_type_distribution": dict(issue_type_counts),
