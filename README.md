@@ -36,13 +36,15 @@ Default dev URL: `http://127.0.0.1:5001`
 | `GET` | `/download?path=...` | Legacy export file download (server-side path). |
 | `GET` | `/download-csms-export?export_id=&kind=` | Cached CSMS export (`csv_zip`, `excel`, `pdf`). |
 | `GET` | `/download-team-posture-export?export_id=&kind=` | Cached team export (`csv`, `excel`). |
-| `POST` | `/run-team-board-metrics` | Board-level metrics: **Pipeline Backlog** (CSMS Prod JQL) and **Team Closed** (separate query). |
+| `POST` | `/run-pipeline-backlog-count` | Fast **Pipeline Backlog** count (Jira search `total`, `maxResults=0`). |
+| `POST` | `/run-team-board-metrics` | **Team Closed** board metric (pass `skip_pipeline: true` for closed-only; omit for both). |
 | `GET` | `/snapshots/list-options?report_id=` | Dropdown options for official saved reports (`exec`, `ops`, `legacy`). |
 | `GET` | `/snapshots/<id>/display` | Hydrate dashboard from a saved snapshot (no Jira). |
 | `POST` | `/snapshots` | Manually save an official report snapshot. |
 | `GET` | `/snapshots/compare?report_id=&snapshot_id=` | Between-report metric deltas vs previous snapshot or manual baseline. |
 | `POST` | `/snapshots/compare-live` | Compare current live metrics to last snapshot / manual baseline. |
-| `GET` | `/snapshots/trends?report_id=&metric_key=` | Time series for per-card sparklines on Operations Team. |
+| `GET` | `/snapshots/trends?report_id=&metric_key=` | Time series for a metric (optional API). |
+| `GET` | `/snapshots/label-trends?report_id=ops&member_username=` | Label count trends for one member across saved Operations snapshots. |
 | `POST` / `GET` | `/manual-baselines` | Manual comparison fallback values when no prior snapshot exists. |
 
 ---
@@ -52,9 +54,10 @@ Default dev URL: `http://127.0.0.1:5001`
 SQLite database (stdlib only) stores **manually saved** dashboard runs. Refreshing from Jira does **not** auto-save.
 
 - **Archive mode:** On tab open, the latest official snapshot loads so KPIs/cards work without Jira.
-- **Report dropdown:** Select any past save or switch to **Live** to refresh from Jira.
-- **Operations Team cards:** Each metric card shows a delta vs the prior official report (or manual baseline) and a sparkline over saved runs.
-- **Pipeline Backlog:** Uses the **CSMS Prod pipeline JQL** (default: project CSMS Defect Management, Phase Reported = Prod, status in New / In Progress / Reopened, issue-type and label exclusions, `created >=` configurable date default 2021-11-08). Override via **Pipeline Backlog JQL** in Team settings. Count = issues returned by that JQL. **Team Closed** uses a separate project/issue-type query.
+- **Report dropdown:** Select any past save or switch to **Live**. Live Jira data loads only when you use **Refresh from Jira** (in Team Posture settings), not when selecting Live alone.
+- **Operations Team cards:** Each metric card shows a **delta %** vs the prior official report (or manual baseline). Sparklines on cards are disabled.
+- **Pipeline Backlog:** Uses the **CSMS Prod pipeline JQL** (default: project CSMS Defect Management, Phase Reported = Prod, status in New / In Progress / Reopened, issue-type and label exclusions, `created >=` configurable date default 2021-11-08). Override via **Pipeline Backlog JQL** in Team settings. Count = Jira search **`total`** for that JQL (no full issue download). Loaded via `/run-pipeline-backlog-count` first during refresh so it is not blocked by Team Closed.
+- **Team Closed:** CSSD/CSD issues in **Closed** status (optional `updated` window from Team Start/End), capped fetch with changelog for roster attribution.
 
 Backup `jira_export_app/data/snapshots.db` with the app folder. The file is gitignored by default.
 
@@ -88,6 +91,9 @@ End-to-end Jira Search with changelog expansion, producing:
 
 ## Team Member Ticket Posture (Team tab)
 
+- **Live refresh:** **Refresh from Jira** (all roster members + board metrics) and **Refresh selected member** live in **Team Posture Variables & Settings** (collapsible card). Status hint (`#teamDataModeHint`) shows Live vs archive and cached member count.
+- **Refresh behavior:** Member posture calls are serialized; pipeline count starts in parallel with the member loop, then Team Closed loads. Use **Save snapshot** to persist an official report to SQLite.
+- **Mobile:** Hamburger sidebar and responsive metric/chart grids at narrow widths.
 - **Team roster:** add/remove members (display name + **Assignee username**); roster stored in **browser localStorage**.  
 - **Jira queries:**  
   - **`jql`** — same filters as broad query **plus** an `assignee in (...)` clause for the selected member’s Jira username.  
@@ -103,11 +109,11 @@ End-to-end Jira Search with changelog expansion, producing:
   - **SLA Breach Count** — **24h from `created`:** open tickets past 24h; closed tickets prefer Jira **Resolution SLA Breached**-style custom field (discovered via `/rest/api/2/field`), else fallback elapsed created → resolutiondate (or updated). Counts include relevant open + closed breaches in member scope.  
   - **Open &lt; 8h to SLA breach** — open tickets with under 8 hours remaining before the 24h window.  
   - **Oldest open** — key + age (days) + detail JSON.  
-- **Other UI:** ticket count by status (owned issues), **Ticket Labels** pie (Chart.js) over **member scope** issues, CSV preview (first rows of raw export).  
+- **Other UI:** ticket count by status (owned issues), **Ticket Labels** bar chart (current) + **Trend** chart from saved snapshots (`/snapshots/label-trends`), CSV preview (first rows of raw export).  
 - **Exports:** per-member **CSV** + **Excel** (raw tickets + summary metrics); **Download Team CSV** — `POST /run-team-posture-board-export` with all members and row-level dashboard bucket tags (one row per issue per matching bucket).  
 - **Warnings:** if Jira returns 500 with `changelog` expansion, the app may retry without changelog (reopen / worked-on / contributed paths may be incomplete).
 
-**Form fields:** `base_url`, `projects`, `start_dt`, `end_dt`, `issue_types`, `csd_assigned_dev_field`, `page_size`, `max_issues`, `verify_ssl`, plus per-request `assignee_username` and `member_name`.
+**Form fields:** `base_url`, `projects`, `start_dt`, `end_dt`, `issue_types`, `csd_assigned_dev_field`, `page_size`, `max_issues`, `pipeline_backlog_created_since`, `pipeline_backlog_jql` (optional override), `verify_ssl`, plus per-request `assignee_username` and `member_name`. Board metrics requests may include `member_usernames`, `skip_pipeline`, or `skip_closed`.
 
 ---
 

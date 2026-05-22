@@ -1326,6 +1326,8 @@ HTML = """
           <div class="notes-card">
             <h3>Team Posture Explainer</h3>
             <ul>
+              <li><strong>Pipeline Backlog:</strong> Count from the CSMS Prod pipeline JQL in Team settings (Jira search total, not a full export).</li>
+              <li><strong>Team rollup cards:</strong> Sum or dedupe across cached members after refresh; delta % compares to the prior saved official report or manual baseline.</li>
               <li><strong>Resolved (Owned):</strong> Resolved/final statuses for tickets owned by the member (assignee plus CSD &quot;Assigned Developer&quot; when configured).</li>
               <li><strong>Resolved (Contributed):</strong> Resolved/final statuses for tickets where the member appears as a status-transition author but is not the current owner.</li>
               <li><strong>Assigned Open:</strong> Current open workload assigned to selected member.</li>
@@ -1337,10 +1339,11 @@ HTML = """
           <div class="notes-card">
             <h3>How To Use</h3>
             <ul>
-              <li>Set date range and project filters in Variables & Settings.</li>
-              <li>Use Team icons to view per-member metrics.</li>
-              <li>Click Refresh All Member Metrics for team-wide refresh.</li>
-              <li>Use Download CSV/Excel for selected member, or Download Team CSV for all members.</li>
+              <li>Open <strong>Team Posture Variables &amp; Settings</strong> for filters, roster, <strong>Refresh from Jira</strong>, and <strong>Refresh selected member</strong>.</li>
+              <li>Choose an <strong>Official report</strong> snapshot or <strong>Live</strong>; Live still requires refresh to pull Jira.</li>
+              <li>Use <strong>Save snapshot</strong> to store an official report in SQLite (refresh does not auto-save).</li>
+              <li>Use Team member icons to switch per-member metrics.</li>
+              <li>Use Download CSV/Excel for the selected member, or Download Team CSV for all members.</li>
             </ul>
           </div>
           <div class="notes-card">
