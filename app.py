@@ -190,11 +190,63 @@ HTML = """
       font-family: Inter, Arial, sans-serif;
       background: linear-gradient(180deg, var(--body-grad-start) 0%, var(--body-grad-end) 100%);
       color: var(--text);
+      overflow-x: hidden;
     }
+    body.nav-open { overflow: hidden; }
     .wrap {
       max-width: 1800px;
       margin: 0;
       padding: 14px 18px 48px 124px;
+      width: 100%;
+      min-width: 0;
+    }
+    .app-mobile-bar,
+    .nav-overlay {
+      display: none;
+    }
+    .app-mobile-bar {
+      align-items: center;
+      gap: 12px;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 52px;
+      padding: 0 12px;
+      z-index: 100;
+      background: var(--side-bg);
+      border-bottom: 1px solid var(--border);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+    }
+    .app-menu-toggle {
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      line-height: 1;
+      border-radius: 10px;
+    }
+    .app-mobile-title {
+      flex: 1;
+      min-width: 0;
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--side-title);
+      letter-spacing: .02em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .nav-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 110;
+      background: rgba(8, 16, 32, 0.55);
+      backdrop-filter: blur(2px);
     }
     .hero {
       display: grid;
@@ -394,16 +446,17 @@ HTML = """
       border-radius: 8px;
     }
     .auth-icon-btn {
-      width: 40px;
-      height: 40px;
-      padding: 0;
-      border-radius: 50%;
+      width: 100%;
+      min-height: 38px;
+      padding: 8px 12px;
+      border-radius: 8px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-size: 18px;
+      font-size: 13px;
       line-height: 1;
     }
+    .auth-tab-label { display: inline; }
     .report-tab.active {
       background: linear-gradient(180deg, var(--side-btn-active-start), var(--side-btn-active-end));
       color: var(--btn-text);
@@ -536,38 +589,80 @@ HTML = """
       margin: 0;
       padding-left: 18px;
     }
-    .legacy-chart-wrap {
+    .legacy-chart-wrap,
+    .csms-chart-wrap {
       width: 100%;
+      max-width: 100%;
+      min-width: 0;
       position: relative;
       overflow: hidden;
       border-radius: 10px;
-    }
-    .legacy-chart-wrap.daily {
-      height: 240px;
-    }
-    .legacy-chart-wrap.status {
-      height: 240px;
-    }
-    .csms-chart-wrap {
-      width: 100%;
-      position: relative;
-      overflow: hidden;
-      border-radius: 8px;
       background: var(--panel);
       border: 1px solid var(--border);
       padding: 8px;
+      box-sizing: border-box;
+    }
+    .legacy-chart-wrap > canvas,
+    .csms-chart-wrap > canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+      max-width: 100%;
+    }
+    .legacy-chart-wrap.daily {
+      height: clamp(200px, 32vh, 280px);
+    }
+    .legacy-chart-wrap.labels-bar {
+      min-height: 200px;
+      height: clamp(200px, 36vh, 320px);
+    }
+    .legacy-chart-wrap.labels-trend {
+      min-height: 220px;
+      height: clamp(220px, 36vh, 320px);
+    }
+    .team-labels-charts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+      gap: 14px;
+      margin-top: 8px;
+      width: 100%;
+      min-width: 0;
+    }
+    .team-labels-charts > div {
+      min-width: 0;
+      max-width: 100%;
+    }
+    .team-labels-charts h3 {
+      margin: 0 0 8px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--heading-strong);
+    }
+    .team-labels-hint {
+      margin: 6px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .legacy-chart-wrap.status {
+      height: clamp(200px, 32vh, 280px);
     }
     .csms-chart-wrap.daily {
-      height: 170px;
+      height: clamp(150px, 28vh, 220px);
     }
     .csms-chart-wrap.small {
-      height: 155px;
+      height: clamp(140px, 26vh, 200px);
     }
     .csms-chart-grid {
       display: grid;
-      grid-template-columns: 1.25fr .75fr;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
       gap: 8px;
       margin-top: 8px;
+      width: 100%;
+      min-width: 0;
+    }
+    .csms-chart-grid > .csms-chart-wrap {
+      min-width: 0;
     }
     .report-scope-csms .section-title { font-size: 36px; font-weight: 800; letter-spacing: 0; }
     .report-scope-csms .section-subtitle { font-size: 14px; letter-spacing: .01em; text-transform: none; margin-top: 4px; }
@@ -675,16 +770,113 @@ HTML = """
       .hero { grid-template-columns: 1fr; }
       .field, .field.wide { grid-column: span 12; }
       .two-col { grid-template-columns: 1fr; }
-      .kpi-grid { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .kpi-number { font-size: 36px; }
       .section-title { font-size: 32px; }
       .section-subtitle { font-size: 18px; }
       .csms-chart-grid { grid-template-columns: 1fr; }
-      .app-nav-title { font-size: 12px; }
-      .wrap { padding-left: 16px; }
-      .app-nav { position: static; width: 100%; height: auto; }
-      .app-nav-actions { flex-direction: row; flex-wrap: wrap; justify-content: center; }
-      .team-grid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+      .team-grid,
+      #teamRollupGrid.team-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .hero-head {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .status-pill {
+        width: 100%;
+        max-width: 100%;
+      }
+      .snapshot-settings-block .snapshot-toolbar,
+      .snapshot-settings-block .baseline-toolbar {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .snapshot-settings-block .snapshot-toolbar > label,
+      .snapshot-settings-block .snapshot-toolbar select,
+      .snapshot-settings-block .snapshot-toolbar input[type="text"],
+      .snapshot-settings-block .snapshot-toolbar button,
+      .snapshot-settings-block .baseline-toolbar input[type="text"],
+      .snapshot-settings-block .baseline-toolbar input[type="number"],
+      .snapshot-settings-block .baseline-toolbar button {
+        grid-column: auto;
+        width: 100%;
+      }
+      pre { max-width: 100%; overflow-x: auto; }
+      .card:not(.app-nav) { overflow-x: clip; }
+      .legacy-chart-wrap,
+      .csms-chart-wrap {
+        height: clamp(180px, 42vw, 260px);
+      }
+      .legacy-chart-wrap.labels-bar {
+        height: clamp(200px, 50vw, 360px);
+      }
+    }
+    @media (max-width: 768px) {
+      .app-mobile-bar {
+        display: flex;
+      }
+      .nav-overlay:not([hidden]) {
+        display: block;
+      }
+      .app-nav {
+        transform: translateX(-105%);
+        transition: transform 0.22s ease;
+        width: min(300px, 88vw);
+        z-index: 120;
+        padding-top: 58px;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .app-nav.is-open {
+        transform: translateX(0);
+        box-shadow: 8px 0 24px rgba(0, 0, 0, 0.25);
+      }
+      .app-nav-title {
+        font-size: 13px;
+        margin-bottom: 4px;
+      }
+      .app-nav .muted-btn {
+        min-height: 44px;
+        font-size: 13px;
+        padding: 10px 12px;
+      }
+      .wrap {
+        padding: 62px 12px 28px;
+        max-width: 100%;
+      }
+      h1, h1.section-title { font-size: 26px; }
+      .section-subtitle { font-size: 16px; }
+      .member-grid {
+        gap: 8px;
+      }
+      .member-pill {
+        min-width: 72px;
+        padding: 8px 10px;
+      }
+    }
+    @media (max-width: 480px) {
+      .team-grid,
+      #teamRollupGrid.team-grid,
+      .kpi-grid,
+      .report-scope-csms .kpi-grid {
+        grid-template-columns: 1fr;
+      }
+      .notes-grid {
+        grid-template-columns: 1fr;
+      }
+      button, .muted-btn {
+        width: 100%;
+      }
+      .row > button,
+      .row > .muted-btn {
+        width: auto;
+        flex: 1 1 auto;
+      }
+      .snapshot-toolbar button {
+        width: 100%;
+      }
     }
     .archive-banner {
       background: var(--download-bg);
@@ -770,44 +962,32 @@ HTML = """
       min-height: 14px;
     }
     .team-metric-card .metric-spark-wrap {
-      display: none;
-      height: 0;
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-    }
-    .team-metric-card .metric-spark-wrap.has-chart {
-      display: block;
-      height: 36px;
-      max-height: 36px;
-      margin-top: 6px;
-      position: relative;
-    }
-    .team-metric-card .metric-spark-wrap canvas.metric-sparkline {
-      display: block;
-      width: 100% !important;
-      height: 36px !important;
-      max-height: 36px !important;
+      display: none !important;
     }
     .kpi-card .metric-trend-sub { font-size: 11px; font-weight: 700; margin-top: 4px; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="card app-nav">
-      <div class="app-nav-shell">
-        <h1 class="app-nav-title">CSMS Reporting</h1>
-        <div class="app-nav-actions">
-          <button type="button" class="muted-btn report-tab active" data-report="csms" title="Executive Report">Executive Report</button>
-          <button type="button" class="muted-btn report-tab" data-report="team" title="Operations Team">Operations Team</button>
-          <button type="button" class="muted-btn report-tab" data-report="legacy" title="Ticket trend">Ticket trend</button>
-          <button type="button" class="muted-btn report-tab" data-report="notes" title="Notes & Guides">Notes</button>
-          <button type="button" class="muted-btn report-tab auth-icon-btn" data-report="auth" title="Auth diagnostics" aria-label="Auth diagnostics">U</button>
-          <button type="button" class="muted-btn theme-toggle" id="themeToggle" aria-label="Toggle theme" title="Switch theme">◐</button>
-        </div>
+  <div class="nav-overlay" id="navOverlay" hidden aria-hidden="true"></div>
+  <header class="app-mobile-bar">
+    <button type="button" class="muted-btn app-menu-toggle" id="navMenuToggle" aria-expanded="false" aria-controls="appNav" aria-label="Open navigation menu" title="Menu">☰</button>
+    <span class="app-mobile-title" id="appMobileTitle">CSMS Reporting</span>
+  </header>
+  <nav class="card app-nav" id="appNav" aria-label="Main navigation">
+    <div class="app-nav-shell">
+      <h1 class="app-nav-title">CSMS Reporting</h1>
+      <div class="app-nav-actions">
+        <button type="button" class="muted-btn report-tab active" data-report="csms" title="Executive Report">Executive Report</button>
+        <button type="button" class="muted-btn report-tab" data-report="team" title="Operations Team">Operations Team</button>
+        <button type="button" class="muted-btn report-tab" data-report="legacy" title="Ticket trend">Ticket trend</button>
+        <button type="button" class="muted-btn report-tab" data-report="notes" title="Notes & Guides">Notes</button>
+        <button type="button" class="muted-btn report-tab auth-icon-btn" data-report="auth" title="Auth diagnostics" aria-label="Auth diagnostics"><span class="auth-tab-label">Auth</span></button>
+        <button type="button" class="muted-btn theme-toggle" id="themeToggle" aria-label="Toggle theme" title="Switch theme">◐</button>
       </div>
     </div>
+  </nav>
 
+  <div class="wrap">
     <section id="csmsDashboardSection" class="app-section report-scope-csms">
       <div class="card">
         <div id="csmsArchiveBanner" class="archive-banner" hidden></div>
@@ -895,33 +1075,31 @@ HTML = """
         <div class="hero-head">
           <div>
             <h2>Team Member Ticket Posture</h2>
-            <p class="small">Click a team member to load stand-up and EOD posture metrics.</p>
             <p id="teamReportPeriod" class="small" style="margin-top:8px;color:var(--muted);">Report period: set Start and End in Team Posture settings.</p>
-            <p id="teamRollupNote" class="small" style="margin-top:8px;color:var(--muted);"></p>
           </div>
         </div>
         <div id="teamRollupGrid" class="team-grid" style="margin-bottom:12px;">
-          <div class="team-metric-card has-spark" data-metric-scope="board" data-metric-key="pipeline_backlog_count" title="CSSD Prod defects in New, In Progress, or Reopened (Phase Reported = Prod, issue-type and label exclusions). Uses Pipeline Backlog JQL in Team settings."><div class="label">Pipeline Backlog</div><div id="teamPipelineBacklogCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
-          <div class="team-metric-card has-spark" data-metric-scope="board" data-metric-key="queue_backlog_count" title="Sum of Queue Backlog counts across team members with cached data: CSSD tickets in Under QA Analysis plus CSD tickets in New. Other projects are excluded per member."><div class="label">Team Queue Backlog</div><div id="teamRollupQueueBacklog" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
-          <div class="team-metric-card has-spark" data-metric-scope="board" data-metric-key="in_progress_count" title="Sum of In Progress counts across cached members: open CSSD tickets not in New or Under QA Analysis, and open CSD tickets not in New."><div class="label">Team In Progress</div><div id="teamRollupInProgress" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
-          <div class="team-metric-card has-spark" data-metric-scope="board" data-metric-key="resolved_in_period_count" title="Sum across cached members: owned tickets in resolved-like status whose resolution time falls between Team Start and End."><div class="label">Team Resolved (Report Period)</div><div id="teamRollupResolvedPeriod" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
-          <div class="team-metric-card has-spark" data-metric-scope="board" data-metric-key="closed_cssd_csd_team_count" title="Unique CSSD/CSD tickets in Closed status where any roster member is assignee/CSD dev owner or contributed a status change. Deduped across the team."><div class="label">Team Closed</div><div id="teamRollupClosedCssdCsd" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card" data-metric-scope="board" data-metric-key="pipeline_backlog_count" title="CSSD Prod defects in New, In Progress, or Reopened (Phase Reported = Prod, issue-type and label exclusions). Uses Pipeline Backlog JQL in Team settings."><div class="label">Pipeline Backlog</div><div id="teamPipelineBacklogCount" class="value">--</div><div class="metric-trend-sub"></div></div>
+          <div class="team-metric-card" data-metric-scope="board" data-metric-key="queue_backlog_count" title="Sum of Queue Backlog counts across team members with cached data: CSSD tickets in Under QA Analysis plus CSD tickets in New. Other projects are excluded per member."><div class="label">Team Queue Backlog</div><div id="teamRollupQueueBacklog" class="value">--</div><div class="metric-trend-sub"></div></div>
+          <div class="team-metric-card" data-metric-scope="board" data-metric-key="in_progress_count" title="Sum of In Progress counts across cached members: open CSSD tickets not in New or Under QA Analysis, and open CSD tickets not in New."><div class="label">Team In Progress</div><div id="teamRollupInProgress" class="value">--</div><div class="metric-trend-sub"></div></div>
+          <div class="team-metric-card" data-metric-scope="board" data-metric-key="resolved_in_period_count" title="Sum across cached members: owned tickets in resolved-like status whose resolution time falls between Team Start and End."><div class="label">Team Resolved (Report Period)</div><div id="teamRollupResolvedPeriod" class="value">--</div><div class="metric-trend-sub"></div></div>
+          <div class="team-metric-card" data-metric-scope="board" data-metric-key="closed_cssd_csd_team_count" title="Unique CSSD/CSD tickets in Closed status where any roster member is assignee/CSD dev owner or contributed a status change. Deduped across the team."><div class="label">Team Closed</div><div id="teamRollupClosedCssdCsd" class="value">--</div><div class="metric-trend-sub"></div></div>
         </div>
         <div id="teamMemberGrid" class="member-grid"></div>
         <div id="teamMetricsGrid" class="team-grid">
-          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="assigned_open_count" title="Owned CSSD/CSD only: CSSD not Resolved or Closed; CSD not Ready For Production Users (assignee or CSD Assigned Developer)."><div class="label">Assigned Open Tickets</div><div id="teamOpenCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
-          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="queue_backlog_count" title="CSSD: Under QA Analysis. CSD: New. Other projects: not counted. Uses ownership rules for this member."><div class="label">Queue Backlog</div><div id="teamQueueBacklogCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
-          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="in_progress_count" title="CSSD: open, not New, not Under QA Analysis. CSD: open and not New. Other projects: not counted."><div class="label">In Progress</div><div id="teamInProgressCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
-          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="worked_status_last_8h_count" title="Tickets you own where you authored a Jira status change in the changelog within the last eight hours from when this report ran. Requires changelog data from Jira."><div class="label">Worked Status (Last 8 Hours)</div><div id="teamWorkedStatusLast8hCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
-          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="worked_status_last_8h_assigned_others_count" title="Tickets owned by someone else under the same ownership rules as Worked On (Assigned to Others), where you authored a status change in the changelog within the last eight hours. Requires changelog data from Jira."><div class="label">Worked Status (Others, Last 8 Hours)</div><div id="teamWorkedStatusOthersLast8hCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
-          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="reopened_count" title="Tickets in the date window whose status sounds reopened, where the member owns the ticket or authored at least one status change."><div class="label">Reopened Tickets</div><div id="teamReopenedCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
-          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="resolved_owned_count" title="Tickets assigned to this member whose status looks finished, such as resolved, closed, completed, or duplicate."><div class="label">Resolved (Owned)</div><div id="teamResolvedOwnedCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
-          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="resolved_contributed_count" title="Finished tickets owned by someone else where this member changed the status at least once."><div class="label">Resolved (Contributed)</div><div id="teamResolvedContributedCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
-          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="closed_cssd_csd_count" title="CSSD and CSD tickets in Closed status only, where you are assignee/CSD Assigned Developer or you contributed a status change (combined, no double count)."><div class="label">Closed</div><div id="teamClosedCssdCsdCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
-          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="resolved_last_8h_count" title="Tickets you own that have a Jira resolution time in the rolling last eight hours from when this report ran. Uses the same finished-status rules as Resolved (Owned)."><div class="label">Resolved (Last 8 Hours)</div><div id="teamResolvedLast8hCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
-          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="worked_on_assigned_others_count" title="Tickets owned by someone else where this member still changed the status at least once."><div class="label">Worked On (Assigned to Others)</div><div id="teamWorkedOtherCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
-          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="sla_breach_count" title="Tickets in this member scope that missed the 24-hour expectation from created time, using the Jira resolution SLA breached field when available, otherwise time to finish."><div class="label">SLA Breach Count</div><div id="teamSlaBreachCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
-          <div class="team-metric-card has-spark" data-metric-scope="member" data-metric-key="open_near_sla_breach_8h_count" title="Open tickets still within 24 hours from created but with under eight hours left before that window ends."><div class="label">Open Tickets &lt; 8h to SLA Breach</div><div id="teamSlaNearCount" class="value">--</div><div class="metric-trend-sub"></div><div class="metric-spark-wrap"></div></div>
+          <div class="team-metric-card" data-metric-scope="member" data-metric-key="assigned_open_count" title="Owned CSSD/CSD only: CSSD not Resolved or Closed; CSD not Ready For Production Users (assignee or CSD Assigned Developer)."><div class="label">Assigned Open Tickets</div><div id="teamOpenCount" class="value">--</div><div class="metric-trend-sub"></div></div>
+          <div class="team-metric-card" data-metric-scope="member" data-metric-key="queue_backlog_count" title="CSSD: Under QA Analysis. CSD: New. Other projects: not counted. Uses ownership rules for this member."><div class="label">Queue Backlog</div><div id="teamQueueBacklogCount" class="value">--</div><div class="metric-trend-sub"></div></div>
+          <div class="team-metric-card" data-metric-scope="member" data-metric-key="in_progress_count" title="CSSD: open, not New, not Under QA Analysis. CSD: open and not New. Other projects: not counted."><div class="label">In Progress</div><div id="teamInProgressCount" class="value">--</div><div class="metric-trend-sub"></div></div>
+          <div class="team-metric-card" data-metric-scope="member" data-metric-key="worked_status_last_8h_count" title="Tickets you own where you authored a Jira status change in the changelog within the last eight hours from when this report ran. Requires changelog data from Jira."><div class="label">Worked Status (Last 8 Hours)</div><div id="teamWorkedStatusLast8hCount" class="value">--</div><div class="metric-trend-sub"></div></div>
+          <div class="team-metric-card" data-metric-scope="member" data-metric-key="worked_status_last_8h_assigned_others_count" title="Tickets owned by someone else under the same ownership rules as Worked On (Assigned to Others), where you authored a status change in the changelog within the last eight hours. Requires changelog data from Jira."><div class="label">Worked Status (Others, Last 8 Hours)</div><div id="teamWorkedStatusOthersLast8hCount" class="value">--</div><div class="metric-trend-sub"></div></div>
+          <div class="team-metric-card" data-metric-scope="member" data-metric-key="reopened_count" title="Tickets in the date window whose status sounds reopened, where the member owns the ticket or authored at least one status change."><div class="label">Reopened Tickets</div><div id="teamReopenedCount" class="value">--</div><div class="metric-trend-sub"></div></div>
+          <div class="team-metric-card" data-metric-scope="member" data-metric-key="resolved_owned_count" title="Tickets assigned to this member whose status looks finished, such as resolved, closed, completed, or duplicate."><div class="label">Resolved (Owned)</div><div id="teamResolvedOwnedCount" class="value">--</div><div class="metric-trend-sub"></div></div>
+          <div class="team-metric-card" data-metric-scope="member" data-metric-key="resolved_contributed_count" title="Finished tickets owned by someone else where this member changed the status at least once."><div class="label">Resolved (Contributed)</div><div id="teamResolvedContributedCount" class="value">--</div><div class="metric-trend-sub"></div></div>
+          <div class="team-metric-card" data-metric-scope="member" data-metric-key="closed_cssd_csd_count" title="CSSD and CSD tickets in Closed status only, where you are assignee/CSD Assigned Developer or you contributed a status change (combined, no double count)."><div class="label">Closed</div><div id="teamClosedCssdCsdCount" class="value">--</div><div class="metric-trend-sub"></div></div>
+          <div class="team-metric-card" data-metric-scope="member" data-metric-key="resolved_last_8h_count" title="Tickets you own that have a Jira resolution time in the rolling last eight hours from when this report ran. Uses the same finished-status rules as Resolved (Owned)."><div class="label">Resolved (Last 8 Hours)</div><div id="teamResolvedLast8hCount" class="value">--</div><div class="metric-trend-sub"></div></div>
+          <div class="team-metric-card" data-metric-scope="member" data-metric-key="worked_on_assigned_others_count" title="Tickets owned by someone else where this member still changed the status at least once."><div class="label">Worked On (Assigned to Others)</div><div id="teamWorkedOtherCount" class="value">--</div><div class="metric-trend-sub"></div></div>
+          <div class="team-metric-card" data-metric-scope="member" data-metric-key="sla_breach_count" title="Tickets in this member scope that missed the 24-hour expectation from created time, using the Jira resolution SLA breached field when available, otherwise time to finish."><div class="label">SLA Breach Count</div><div id="teamSlaBreachCount" class="value">--</div><div class="metric-trend-sub"></div></div>
+          <div class="team-metric-card" data-metric-scope="member" data-metric-key="open_near_sla_breach_8h_count" title="Open tickets still within 24 hours from created but with under eight hours left before that window ends."><div class="label">Open Tickets &lt; 8h to SLA Breach</div><div id="teamSlaNearCount" class="value">--</div><div class="metric-trend-sub"></div></div>
           <div class="team-metric-card" title="Among open tickets assigned to this member, the issue key that has waited the longest since creation."><div class="label">Oldest Open Ticket</div><div id="teamOldestTicket" class="value">--</div></div>
           <div class="team-metric-card" title="How many days that oldest open ticket has been waiting."><div class="label">Oldest Open Age (days)</div><div id="teamOldestAge" class="value">--</div></div>
         </div>
@@ -936,15 +1114,32 @@ HTML = """
           <pre id="teamOldestDetail">Select a member and refresh.</pre>
         </div>
       </div>
-      <div class="card" style="margin-top:18px;" title="How tickets in this member scope are split across Jira labels.">
+      <div class="card" style="margin-top:18px;" title="Jira label counts for the selected member: current bar chart and trends from saved Operations snapshots.">
         <h2>Ticket Labels</h2>
-        <div class="legacy-chart-wrap daily">
-          <canvas id="teamLabelsChart"></canvas>
+        <p id="teamLabelsHint" class="team-labels-hint">Select a member and refresh. Save snapshots to build label trends over time.</p>
+        <div class="team-labels-charts">
+          <div>
+            <h3>Current (top labels)</h3>
+            <div class="legacy-chart-wrap labels-bar">
+              <canvas id="teamLabelsBarChart"></canvas>
+            </div>
+          </div>
+          <div>
+            <h3>Trend</h3>
+            <div class="legacy-chart-wrap labels-trend">
+              <canvas id="teamLabelsTrendChart"></canvas>
+            </div>
+          </div>
         </div>
       </div>
       <div id="teamSettingsCard" class="card collapse-card report-scope-team" style="margin-top:18px;">
         <button type="button" class="muted-btn collapse-toggle" data-collapse-target="teamSettings" aria-expanded="false" aria-controls="teamSettings">Show Team Posture Variables & Settings</button>
         <div id="teamSettings" class="collapse-body" hidden>
+          <p id="teamDataModeHint" class="small" style="margin:0 0 10px;color:var(--muted);"></p>
+          <div class="row" style="margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+            <button type="button" class="muted-btn" id="teamRefreshBtnMain">Refresh from Jira</button>
+            <button type="button" class="muted-btn" id="teamRefreshActiveBtn">Refresh selected member</button>
+          </div>
           <h2>Team Posture Settings</h2>
           <form id="teamPostureForm">
             <div class="field wide"><label>Jira Search Endpoint</label><input name="base_url" value="https://jira.mdthink.maryland.gov/rest/api/2/search" /></div>
@@ -1164,6 +1359,74 @@ HTML = """
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+let csmsCharts = { daily: null, status: null, top: null };
+let legacyCharts = { status: null, daily: null };
+let teamCharts = { labelsBar: null, labelsTrend: null };
+let lastTeamLabelDistribution = null;
+let latestCsmsPayload = null;
+let latestLegacyPayload = null;
+let latestBoardMetrics = {};
+let latestBoardMetricsLoaded = false;
+let latestPipelineBacklogLoaded = false;
+let boardMetricsRefreshInFlight = null;
+let teamBulkRefreshInFlight = null;
+let teamJiraQueue = Promise.resolve();
+
+/** Run team Jira API calls one at a time so Flask is not overloaded. */
+function enqueueTeamJira(task) {
+  const run = teamJiraQueue.then(() => task());
+  teamJiraQueue = run.catch(() => {});
+  return run;
+}
+
+let teamMembers = [];
+let activeTeamMemberId = null;
+let latestTeamPosturePayload = null;
+let teamPayloadByMemberId = {};
+const snapshotViewMode = { exec: "archive", ops: "archive", legacy: "archive" };
+const activeSnapshotId = { exec: null, ops: null, legacy: null };
+const metricSparkCharts = {};
+
+function destroyChart(instance) {
+  if (instance) instance.destroy();
+}
+
+function chartInstancesForResize() {
+  return [
+    ...Object.values(csmsCharts),
+    ...Object.values(legacyCharts),
+    ...Object.values(teamCharts),
+    ...Object.values(metricSparkCharts),
+  ].filter(Boolean);
+}
+
+function isChartContainerVisible(chart) {
+  const canvas = chart && chart.canvas;
+  if (!canvas) return false;
+  const wrap = canvas.closest(".legacy-chart-wrap, .csms-chart-wrap, .metric-spark-wrap");
+  if (!wrap || wrap.offsetParent === null) return false;
+  const section = canvas.closest(".app-section");
+  if (section && section.hidden) return false;
+  return wrap.clientWidth > 0 && wrap.clientHeight > 0;
+}
+
+function resizeAllCharts() {
+  for (const chart of chartInstancesForResize()) {
+    if (!isChartContainerVisible(chart)) continue;
+    try {
+      chart.resize();
+    } catch (_) { /* chart may be mid-destroy */ }
+  }
+}
+
+function scheduleChartResize() {
+  if (scheduleChartResize._timer) clearTimeout(scheduleChartResize._timer);
+  scheduleChartResize._timer = setTimeout(() => {
+    scheduleChartResize._timer = null;
+    resizeAllCharts();
+  }, 80);
+}
+
 const THEME_PARAMS = {
   light: {
     "--bg": "#f3f7ff",
@@ -1248,14 +1511,117 @@ function applyTheme(theme) {
   toggle.textContent = chosen === "dark" ? "☀" : "☾";
   toggle.setAttribute("title", `Switch to ${next}`);
   toggle.setAttribute("aria-label", `Switch to ${next}`);
+  refreshChartsForTheme();
+}
+
+function getChartTheme() {
+  const styles = getComputedStyle(document.documentElement);
+  const pick = (name, fallback) => (styles.getPropertyValue(name).trim() || fallback);
+  return {
+    text: pick("--text", "#e8ecff"),
+    muted: pick("--muted", "#9fb0e5"),
+    border: pick("--border", "#2a376a"),
+    panel: pick("--panel", "#121933"),
+    heading: pick("--heading-strong", "#cddcff"),
+  };
+}
+
+/** Distinct slice colors for pie/doughnut charts (readable on light and dark backgrounds). */
+const CHART_SLICE_PALETTE = [
+  "#4e9af5", "#f28e2b", "#59c9a5", "#e76f8b", "#9b7ede",
+  "#f4b740", "#5ec8d8", "#ff8c69", "#7cb342", "#ba68c8",
+  "#26a69a", "#ef5350", "#42a5f5", "#ab47bc", "#ffa726",
+  "#66bb6a", "#29b6f6", "#ec407a", "#8d6e63", "#78909c",
+  "#7e57c2", "#26c6da", "#d4e157", "#ff7043", "#5c6bc0",
+];
+
+function chartSliceColors(count) {
+  const colors = [];
+  for (let i = 0; i < count; i++) {
+    colors.push(CHART_SLICE_PALETTE[i % CHART_SLICE_PALETTE.length]);
+  }
+  return colors;
+}
+
+function chartPieDataset(values, theme) {
+  const colors = chartSliceColors(values.length);
+  return {
+    data: values,
+    backgroundColor: colors,
+    borderColor: theme.panel,
+    borderWidth: 1,
+    hoverBorderColor: theme.text,
+    hoverBorderWidth: 1,
+  };
+}
+
+function chartThemePlugins(theme, extraPlugins) {
+  const extra = extraPlugins || {};
+  const legendExtra = extra.legend || {};
+  const titleExtra = extra.title || {};
+  return {
+    legend: {
+      display: legendExtra.display !== false,
+      position: legendExtra.position || "top",
+      labels: {
+        color: theme.text,
+        boxWidth: 12,
+        padding: 10,
+        font: { size: 11 },
+        usePointStyle: true,
+        pointStyle: "rectRounded",
+        ...(legendExtra.labels || {}),
+      },
+    },
+    tooltip: {
+      backgroundColor: theme.panel,
+      titleColor: theme.heading,
+      bodyColor: theme.text,
+      borderColor: theme.border,
+      borderWidth: 1,
+      ...(extra.tooltip || {}),
+    },
+    title: titleExtra.display
+      ? {
+          display: true,
+          text: titleExtra.text || "",
+          color: theme.heading,
+          font: { size: 13, weight: "600" },
+          ...(titleExtra.font ? { font: titleExtra.font } : {}),
+        }
+      : { display: false },
+  };
+}
+
+function chartThemeScales(theme) {
+  const axis = {
+    ticks: { color: theme.muted },
+    grid: { color: theme.border },
+    border: { color: theme.border },
+  };
+  return { x: { ...axis }, y: { ...axis } };
+}
+
+function refreshChartsForTheme() {
+  const teamSection = document.getElementById("teamPostureSection");
+  if (lastTeamLabelDistribution && teamSection && !teamSection.hidden) {
+    refreshTeamLabelCharts(lastTeamLabelDistribution);
+  }
+  const csmsSection = document.getElementById("csmsDashboardSection");
+  if (latestCsmsPayload && latestCsmsPayload.charts && csmsSection && !csmsSection.hidden) {
+    renderCsmsCharts(latestCsmsPayload.charts);
+  }
+  const legacySection = document.getElementById("legacyDashboardSection");
+  if (latestLegacyPayload && latestLegacyPayload.charts && legacySection && !legacySection.hidden) {
+    renderLegacyCharts(latestLegacyPayload.charts);
+  }
+  scheduleChartResize();
 }
 
 document.getElementById("themeToggle").addEventListener("click", () => {
   const current = document.documentElement.getAttribute("data-theme") || "dark";
   applyTheme(current === "dark" ? "light" : "dark");
 });
-
-applyTheme(localStorage.getItem("theme") || "dark");
 
 function setCollapseState(toggle, expanded) {
   const targetId = toggle.getAttribute("data-collapse-target");
@@ -1313,6 +1679,13 @@ document.getElementById("exportForm").addEventListener("submit", async (e) => {
   const data = await res.json();
   document.getElementById("result").textContent = JSON.stringify(data, null, 2);
 
+  if (!res.ok) {
+    document.getElementById("downloads").innerHTML = "";
+    const msg = data.error || data.details || "Export failed.";
+    document.getElementById("legacyInsights").textContent = `Export error: ${msg}`;
+    return;
+  }
+
   if (data.downloads) {
     const parts = [];
     for (const item of data.downloads) {
@@ -1322,22 +1695,6 @@ document.getElementById("exportForm").addEventListener("submit", async (e) => {
   }
   await refreshLegacyDashboard(payload);
 });
-
-let csmsCharts = { daily: null, status: null, top: null };
-let legacyCharts = { status: null, daily: null };
-let teamCharts = { labels: null };
-let latestCsmsPayload = null;
-let latestLegacyPayload = null;
-let latestBoardMetrics = {};
-let latestBoardMetricsLoaded = false;
-let boardMetricsRefreshInFlight = null;
-let teamMembers = [];
-let activeTeamMemberId = null;
-let latestTeamPosturePayload = null;
-let teamPayloadByMemberId = {};
-const snapshotViewMode = { exec: "archive", ops: "archive", legacy: "archive" };
-const activeSnapshotId = { exec: null, ops: null, legacy: null };
-const metricSparkCharts = {};
 
 const DEFAULT_TEAM_MEMBERS = __DEFAULT_TEAM_ROSTER_JSON__;
 
@@ -1366,6 +1723,87 @@ function initialsFor(name) {
   return parts.slice(0, 2).map((p) => p[0].toUpperCase()).join("");
 }
 
+function updateTeamDataModeHint() {
+  const el = document.getElementById("teamDataModeHint");
+  if (!el) return;
+  if (snapshotViewMode.team === "live") {
+    const n = Object.keys(teamPayloadByMemberId).length;
+    el.textContent = n
+      ? `Live — ${n} member(s) cached in this session. Use Refresh from Jira to update.`
+      : "Live — no Jira data loaded yet. Use Refresh from Jira or Refresh selected member.";
+    return;
+  }
+  const snapId = activeSnapshotId.ops;
+  el.textContent = snapId
+    ? `Archived report #${snapId} — member metrics from the saved snapshot (no Jira calls).`
+    : "Archived report — select a saved official report from settings.";
+}
+
+function clearTeamMemberMetricCards() {
+  const ids = [
+    "teamOpenCount", "teamQueueBacklogCount", "teamInProgressCount",
+    "teamWorkedStatusLast8hCount", "teamWorkedStatusOthersLast8hCount",
+    "teamReopenedCount", "teamResolvedOwnedCount", "teamResolvedContributedCount",
+    "teamClosedCssdCsdCount", "teamResolvedLast8hCount", "teamWorkedOtherCount",
+    "teamSlaBreachCount", "teamSlaNearCount", "teamOldestTicket", "teamOldestAge",
+  ];
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = "--";
+  }
+  document.querySelectorAll("#teamMetricsGrid .metric-trend-sub").forEach((sub) => {
+    sub.textContent = "—";
+    sub.className = "metric-trend-sub";
+    sub.removeAttribute("title");
+  });
+}
+
+function refreshOpsMetricTrendsForCurrentMode() {
+  if (snapshotViewMode.team === "live") {
+    return refreshOpsMetricTrends(null, "live");
+  }
+  if (activeSnapshotId.ops) {
+    return refreshOpsMetricTrends(activeSnapshotId.ops, "archive");
+  }
+  return Promise.resolve();
+}
+
+function selectTeamMember(memberId) {
+  if (teamBulkRefreshInFlight) return;
+  activeTeamMemberId = memberId;
+  renderTeamMemberIcons();
+  updateTeamDataModeHint();
+  const member = teamMembers.find((m) => m.id === memberId);
+  if (!member) return;
+
+  const cached = teamPayloadByMemberId[memberId];
+  if (cached) {
+    latestTeamPosturePayload = cached;
+    renderTeamPostureMetrics(cached);
+    updateTeamRollupHeader();
+    void refreshOpsMetricTrendsForCurrentMode();
+    return;
+  }
+
+  if (snapshotViewMode.team === "live") {
+    void refreshTeamPosture();
+    return;
+  }
+
+  clearTeamMemberMetricCards();
+  const statusEl = document.getElementById("teamStatusSummary");
+  const detailEl = document.getElementById("teamOldestDetail");
+  const msg = `${member.name} is not in this saved report. Choose another member, or switch Official report to Live and refresh from Jira.`;
+  if (statusEl) statusEl.textContent = msg;
+  if (detailEl) detailEl.textContent = msg;
+  destroyChart(teamCharts.labelsBar);
+  destroyChart(teamCharts.labelsTrend);
+  teamCharts.labelsBar = null;
+  teamCharts.labelsTrend = null;
+  const hintEl = document.getElementById("teamLabelsHint");
+  if (hintEl) hintEl.textContent = msg;
+}
+
 function renderTeamMemberIcons() {
   const grid = document.getElementById("teamMemberGrid");
   if (!grid) return;
@@ -1376,22 +1814,20 @@ function renderTeamMemberIcons() {
     </button>
   `).join("");
   grid.querySelectorAll(".member-pill").forEach((btn) => {
+    btn.disabled = Boolean(teamBulkRefreshInFlight);
     btn.addEventListener("click", () => {
-      activeTeamMemberId = btn.getAttribute("data-member-id");
-      renderTeamMemberIcons();
-      const cached = teamPayloadByMemberId[activeTeamMemberId];
-      if (cached) {
-        latestTeamPosturePayload = cached;
-        renderTeamPostureMetrics(cached);
-        if (snapshotViewMode.team === "live") {
-          refreshOpsMetricTrends(null, "live");
-          void ensureTeamBoardMetrics();
-        }
-      } else {
-        refreshTeamPosture();
-      }
+      selectTeamMember(btn.getAttribute("data-member-id"));
     });
   });
+}
+
+function ensureLiveModeForTeamRefresh() {
+  snapshotViewMode.team = "live";
+  activeSnapshotId.ops = null;
+  const sel = document.getElementById("teamSnapshotSelect");
+  if (sel) sel.value = "live";
+  setArchiveBanner("team", false, "");
+  updateTeamDataModeHint();
 }
 
 function activeTeamMember() {
@@ -1412,7 +1848,7 @@ function teamFormToObject() {
 
 function buildOpsBoardRollupFromCache() {
   const board = {
-    pipeline_backlog_count: latestBoardMetricsLoaded
+    pipeline_backlog_count: (latestPipelineBacklogLoaded || latestBoardMetricsLoaded)
       ? Number(latestBoardMetrics.pipeline_backlog_count ?? 0)
       : null,
     closed_cssd_csd_team_count: latestBoardMetricsLoaded
@@ -1426,7 +1862,8 @@ function buildOpsBoardRollupFromCache() {
   };
   let cached = 0;
   for (const m of teamMembers) {
-    const pl = teamPayloadByMemberId[m.id];
+    const pl = teamPayloadByMemberId[m.id]
+      || (m.id === activeTeamMemberId ? latestTeamPosturePayload : null);
     if (!pl || !pl.metrics) continue;
     cached += 1;
     board.queue_backlog_count += Number(pl.metrics.queue_backlog_count ?? 0);
@@ -1451,7 +1888,6 @@ function updateTeamRollupHeader(boardOverride) {
   const rEl = document.getElementById("teamRollupResolvedPeriod");
   const closedEl = document.getElementById("teamRollupClosedCssdCsd");
   const pipeEl = document.getElementById("teamPipelineBacklogCount");
-  const noteEl = document.getElementById("teamRollupNote");
   if (!qEl || !pEl || !rEl) return;
   if (boardOverride) {
     if (pipeEl) pipeEl.textContent = String(boardOverride.pipeline_backlog_count ?? "--");
@@ -1459,7 +1895,6 @@ function updateTeamRollupHeader(boardOverride) {
     qEl.textContent = String(boardOverride.queue_backlog_count ?? "--");
     pEl.textContent = String(boardOverride.in_progress_count ?? "--");
     rEl.textContent = String(boardOverride.resolved_in_period_count ?? "--");
-    if (noteEl) noteEl.textContent = boardOverride._archiveNote || "";
     return;
   }
   if (!teamMembers.length) {
@@ -1468,7 +1903,6 @@ function updateTeamRollupHeader(boardOverride) {
     qEl.textContent = "--";
     pEl.textContent = "--";
     rEl.textContent = "--";
-    if (noteEl) noteEl.textContent = "";
     return;
   }
   const board = buildOpsBoardRollupFromCache();
@@ -1481,7 +1915,6 @@ function updateTeamRollupHeader(boardOverride) {
     qEl.textContent = "--";
     pEl.textContent = "--";
     rEl.textContent = "--";
-    if (noteEl) noteEl.textContent = "Refresh members to load team totals.";
     return;
   }
   if (closedEl) {
@@ -1490,63 +1923,172 @@ function updateTeamRollupHeader(boardOverride) {
   qEl.textContent = String(board.queue_backlog_count);
   pEl.textContent = String(board.in_progress_count);
   rEl.textContent = String(board.resolved_in_period_count);
-  if (noteEl) {
-    const parts = [];
-    if (!latestBoardMetricsLoaded) {
-      parts.push("Pipeline Backlog and Team Closed load from Jira when you refresh a member or use Refresh All Member Metrics.");
-    }
-    if (cached < teamMembers.length) {
-      parts.push(`Team totals include ${cached}/${teamMembers.length} members with cached data. Run Refresh All Member Metrics for the full roster.`);
-    }
-    noteEl.textContent = parts.join(" ");
-  }
 }
 
-function applyBoardMetricsFromResponse(data) {
+function teamBoardMetricsPayload() {
+  const payload = teamFormToObject();
+  delete payload.assignee_username;
+  delete payload.member_name;
+  payload.member_usernames = teamMembers.map((m) => m.username).filter(Boolean);
+  return payload;
+}
+
+function applyPipelineBacklogFromResponse(data) {
+  const count = data?.pipeline_backlog_count ?? data?.board_metrics?.pipeline_backlog_count;
+  if (count == null) return false;
+  latestBoardMetrics = { ...latestBoardMetrics, pipeline_backlog_count: Number(count) };
+  latestPipelineBacklogLoaded = true;
+  updateTeamRollupHeader();
+  return true;
+}
+
+function applyBoardMetricsFromResponse(data, merge) {
   if (!data || !data.board_metrics) return false;
-  latestBoardMetrics = data.board_metrics;
-  latestBoardMetricsLoaded = true;
+  latestBoardMetrics = merge
+    ? { ...latestBoardMetrics, ...data.board_metrics }
+    : data.board_metrics;
+  if (data.board_metrics.pipeline_backlog_count != null) {
+    latestPipelineBacklogLoaded = true;
+  }
+  if (data.board_metrics.closed_cssd_csd_team_count != null) {
+    latestBoardMetricsLoaded = true;
+  } else if (!merge) {
+    latestBoardMetricsLoaded = true;
+  }
   updateTeamRollupHeader();
   return true;
 }
 
 function ensureTeamBoardMetrics() {
   if (boardMetricsRefreshInFlight) return boardMetricsRefreshInFlight;
-  boardMetricsRefreshInFlight = refreshTeamBoardMetrics().finally(() => {
+  boardMetricsRefreshInFlight = enqueueTeamJira(() => refreshTeamBoardMetrics()).finally(() => {
     boardMetricsRefreshInFlight = null;
   });
   return boardMetricsRefreshInFlight;
 }
 
-async function refreshTeamBoardMetrics() {
-  const payload = teamFormToObject();
-  delete payload.assignee_username;
-  delete payload.member_name;
-  payload.member_usernames = teamMembers.map((m) => m.username).filter(Boolean);
+async function refreshPipelineBacklogCount() {
+  const payload = teamBoardMetricsPayload();
   const pipeEl = document.getElementById("teamPipelineBacklogCount");
-  if (pipeEl && !latestBoardMetricsLoaded) pipeEl.textContent = "…";
+  if (pipeEl && !latestPipelineBacklogLoaded) pipeEl.textContent = "…";
+  try {
+    const res = await fetch("/run-pipeline-backlog-count", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(90000),
+    });
+    let data = {};
+    try {
+      data = await res.json();
+    } catch (_) {
+      console.warn("Pipeline backlog: invalid JSON response", res.status);
+      if (pipeEl && !latestPipelineBacklogLoaded) pipeEl.textContent = "--";
+      return false;
+    }
+    if (res.ok && applyPipelineBacklogFromResponse(data)) {
+      if ((data.warnings || []).length) console.warn("Pipeline backlog:", data.warnings.join(" "));
+      return true;
+    }
+    console.warn("Pipeline backlog failed:", data);
+    if (pipeEl && !latestPipelineBacklogLoaded) pipeEl.textContent = "--";
+    return false;
+  } catch (e) {
+    console.warn("Pipeline backlog error:", e);
+    if (pipeEl && !latestPipelineBacklogLoaded) pipeEl.textContent = "--";
+    return false;
+  }
+}
+
+async function refreshTeamClosedBoardMetrics() {
+  const payload = teamBoardMetricsPayload();
+  payload.skip_pipeline = true;
+  const closedEl = document.getElementById("teamRollupClosedCssdCsd");
+  if (closedEl && !latestBoardMetricsLoaded) closedEl.textContent = "…";
   try {
     const res = await fetch("/run-team-board-metrics", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(300000),
     });
-    const data = await res.json();
-    if (res.ok && applyBoardMetricsFromResponse(data)) {
-      if ((data.warnings || []).length) {
-        const noteEl = document.getElementById("teamRollupNote");
-        if (noteEl) noteEl.textContent = `${noteEl.textContent || ""} ${data.warnings.join(" ")}`.trim();
-      }
-    } else if (!res.ok) {
-      const noteEl = document.getElementById("teamRollupNote");
-      if (noteEl) noteEl.textContent = `Board metrics failed: ${JSON.stringify(data)}`;
-      if (pipeEl && !latestBoardMetricsLoaded) pipeEl.textContent = "--";
+    let data = {};
+    try {
+      data = await res.json();
+    } catch (_) {
+      console.warn("Team closed metrics: invalid JSON response", res.status);
+      if (closedEl && !latestBoardMetricsLoaded) closedEl.textContent = "--";
+      return false;
     }
+    if (res.ok && applyBoardMetricsFromResponse(data, true)) {
+      latestBoardMetricsLoaded = true;
+      updateTeamRollupHeader();
+      if ((data.warnings || []).length) console.warn("Team closed metrics:", data.warnings.join(" "));
+      return true;
+    }
+    console.warn("Team closed metrics failed:", data);
+    if (closedEl && !latestBoardMetricsLoaded) closedEl.textContent = "--";
+    return false;
   } catch (e) {
-    const noteEl = document.getElementById("teamRollupNote");
-    if (noteEl) noteEl.textContent = `Board metrics error: ${e && e.message ? e.message : String(e)}`;
-    if (pipeEl && !latestBoardMetricsLoaded) pipeEl.textContent = "--";
+    console.warn("Team closed metrics error:", e);
+    if (closedEl && !latestBoardMetricsLoaded) closedEl.textContent = "--";
+    const statusEl = document.getElementById("teamStatusSummary");
+    if (statusEl && e && e.name === "TimeoutError") {
+      statusEl.textContent = "Team closed metrics timed out. Pipeline backlog above may still be valid — retry refresh.";
+    }
+    return false;
   }
+}
+
+async function refreshTeamBoardMetrics() {
+  const pipeOk = await refreshPipelineBacklogCount();
+  const closedOk = await refreshTeamClosedBoardMetrics();
+  return pipeOk || closedOk;
+}
+
+async function fetchTeamPosture(payload) {
+  const res = await fetch("/run-team-posture", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(600000),
+  });
+  let data;
+  try {
+    data = await res.json();
+  } catch (_) {
+    throw new Error(`Invalid server response (HTTP ${res.status})`);
+  }
+  if (!res.ok) {
+    throw new Error((data && data.error) ? String(data.error) : "Request failed");
+  }
+  return data;
+}
+
+function formatTeamPostureStatus(payload) {
+  const meta = payload.query_meta || {};
+  const broadN = Number(meta.broad_issue_count ?? (payload.raw_rows || []).length);
+  const assigneeN = Number(meta.assignee_issue_count ?? 0);
+  if (broadN === 0) {
+    return [
+      `Jira returned 0 tickets in the broad metrics query for ${(payload.member && payload.member.name) || "this member"}.`,
+      "",
+      "Broad JQL (used for posture metrics):",
+      payload.broad_jql || "(not set)",
+      "",
+      "Assignee JQL:",
+      payload.jql || "(not set)",
+      "",
+      "If Start Date/Time is set in Team settings, only tickets created on/after that time are included.",
+      "Clear Start or use an earlier date (e.g. start of month) to include more tickets.",
+    ].join("\\n");
+  }
+  const status = payload.status_distribution || {};
+  const lines = Object.entries(status)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .map(([k, v]) => `${k}: ${v}`);
+  lines.push("", `${broadN} ticket(s) in broad scope (${assigneeN} on assignee filter).`);
+  return lines.join("\\n");
 }
 
 function renderTeamPostureMetrics(payload) {
@@ -1574,40 +2116,168 @@ function renderTeamPostureMetrics(payload) {
   document.getElementById("teamOldestTicket").textContent = oldest.issue_key || "N/A";
   document.getElementById("teamOldestAge").textContent = String(oldest.age_days ?? "--");
 
-  const status = payload.status_distribution || {};
-  const statusLines = Object.entries(status)
-    .sort((a, b) => Number(b[1]) - Number(a[1]))
-    .map(([k, v]) => `${k}: ${v}`);
-  document.getElementById("teamStatusSummary").textContent = statusLines.join("\\n") || "No status counts.";
+  document.getElementById("teamStatusSummary").textContent = formatTeamPostureStatus(payload);
   document.getElementById("teamOldestDetail").textContent = JSON.stringify(oldest || {}, null, 2);
-  renderTeamLabelsChart(payload.label_distribution || {});
+  refreshTeamLabelCharts(payload.label_distribution || {});
   renderTeamCsvPreview(payload.raw_rows || []);
   updateTeamRollupHeader();
-  if (snapshotViewMode.team === "live") {
-    refreshOpsMetricTrends(null, "live");
+  updateTeamDataModeHint();
+  if (!teamBulkRefreshInFlight && !payload._fromArchive) {
+    void refreshOpsMetricTrendsForCurrentMode();
   }
 }
 
-function renderTeamLabelsChart(labelDistribution) {
-  const el = document.getElementById("teamLabelsChart");
+const TEAM_LABELS_BAR_TOP_N = 15;
+const TEAM_LABELS_TREND_TOP_N = 10;
+
+function renderTeamLabelsBarChart(labelDistribution) {
+  const el = document.getElementById("teamLabelsBarChart");
   if (!el) return;
-  const entries = Object.entries(labelDistribution || {}).sort((a, b) => Number(b[1]) - Number(a[1]));
+  lastTeamLabelDistribution = labelDistribution || {};
+  const entries = Object.entries(lastTeamLabelDistribution)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .slice(0, TEAM_LABELS_BAR_TOP_N);
+  const theme = getChartTheme();
+  const wrap = el.closest(".legacy-chart-wrap");
+  if (wrap) {
+    const h = Math.min(480, Math.max(200, 80 + entries.length * 22));
+    wrap.style.height = `${h}px`;
+    wrap.style.maxHeight = "min(480px, 55vh)";
+  }
   const ctx = el.getContext("2d");
-  destroyChart(teamCharts.labels);
-  teamCharts.labels = new Chart(ctx, {
-    type: "pie",
+  destroyChart(teamCharts.labelsBar);
+  if (!entries.length) {
+    teamCharts.labelsBar = null;
+    return;
+  }
+  const colors = chartSliceColors(entries.length);
+  teamCharts.labelsBar = new Chart(ctx, {
+    type: "bar",
     data: {
       labels: entries.map(([k]) => k),
-      datasets: [{ data: entries.map(([, v]) => v) }],
+      datasets: [{
+        label: "Tickets",
+        data: entries.map(([, v]) => Number(v)),
+        backgroundColor: colors,
+        borderColor: theme.panel,
+        borderWidth: 1,
+      }],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: {
-        legend: { position: "right" },
+      indexAxis: "y",
+      plugins: chartThemePlugins(theme, { legend: { display: false } }),
+      scales: {
+        x: {
+          ticks: { color: theme.muted, precision: 0 },
+          grid: { color: theme.border },
+          border: { color: theme.border },
+          title: { display: true, text: "Ticket count", color: theme.muted },
+        },
+        y: {
+          ticks: { color: theme.text, autoSkip: false, font: { size: 10 } },
+          grid: { display: false },
+          border: { color: theme.border },
+        },
       },
     },
   });
+  scheduleChartResize();
+}
+
+async function renderTeamLabelsTrendChart() {
+  const el = document.getElementById("teamLabelsTrendChart");
+  const hintEl = document.getElementById("teamLabelsHint");
+  if (!el) return;
+  const member = activeTeamMember();
+  const theme = getChartTheme();
+  destroyChart(teamCharts.labelsTrend);
+  teamCharts.labelsTrend = null;
+
+  if (!member || !member.username) {
+    if (hintEl) hintEl.textContent = "Select a member and refresh to see label charts.";
+    return;
+  }
+
+  let url = `/snapshots/label-trends?report_id=ops&member_username=${encodeURIComponent(member.username)}&top=${TEAM_LABELS_TREND_TOP_N}`;
+  if (snapshotViewMode.team !== "live" && activeSnapshotId.ops) {
+    url += `&to_snapshot_id=${encodeURIComponent(activeSnapshotId.ops)}`;
+  }
+  let series = { time_labels: [], datasets: [], snapshot_count: 0 };
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (res.ok) series = data;
+  } catch (e) {
+    if (hintEl) hintEl.textContent = `Label trend load failed: ${e && e.message ? e.message : String(e)}`;
+    return;
+  }
+
+  const timeLabels = [...(series.time_labels || [])];
+  const datasets = (series.datasets || []).map((ds) => ({
+    label: ds.label,
+    data: [...(ds.data || [])],
+  }));
+
+  if (snapshotViewMode.team === "live" && lastTeamLabelDistribution && Object.keys(lastTeamLabelDistribution).length) {
+    timeLabels.push("Now");
+    for (const ds of datasets) {
+      ds.data.push(Number(lastTeamLabelDistribution[ds.label] || 0));
+    }
+  }
+
+  if (!timeLabels.length) {
+    if (hintEl) {
+      hintEl.textContent = snapshotViewMode.team === "live"
+        ? "No saved snapshots with label data for this member yet. Click Save snapshot after refresh to start tracking trends."
+        : "No label history in this archived report for this member.";
+    }
+    return;
+  }
+
+  if (hintEl) {
+    const pts = series.snapshot_count || timeLabels.length;
+    hintEl.textContent = `Trend uses top ${TEAM_LABELS_TREND_TOP_N} labels across ${pts} saved report(s)${snapshotViewMode.team === "live" ? "; “Now” is the current refresh." : "."}`;
+  }
+
+  const ctx = el.getContext("2d");
+  teamCharts.labelsTrend = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: timeLabels,
+      datasets: datasets.map((ds, i) => {
+        const color = CHART_SLICE_PALETTE[i % CHART_SLICE_PALETTE.length];
+        return {
+          label: ds.label,
+          data: ds.data,
+          borderColor: color,
+          backgroundColor: color + "33",
+          tension: 0.25,
+          fill: false,
+          pointRadius: 3,
+          pointHoverRadius: 5,
+        };
+      }),
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: chartThemePlugins(theme, {
+        legend: { position: "bottom", labels: { boxWidth: 10, padding: 8, font: { size: 10 } } },
+      }),
+      scales: chartThemeScales(theme),
+      layout: { padding: { left: 4, right: 8, top: 4, bottom: 4 } },
+    },
+  });
+  scheduleChartResize();
+}
+
+async function refreshTeamLabelCharts(labelDistribution) {
+  renderTeamLabelsBarChart(labelDistribution);
+  await renderTeamLabelsTrendChart();
+  scheduleChartResize();
 }
 
 function toCsv(rows, headers) {
@@ -1637,99 +2307,168 @@ function renderTeamCsvPreview(rawRows) {
 }
 
 async function refreshTeamPosture() {
-  updateTeamReportPeriodLabel();
-  const member = activeTeamMember();
-  if (!member) {
-    document.getElementById("teamStatusSummary").textContent = "Add and select a member first.";
-    document.getElementById("teamCsvPreview").textContent = "Add and select a member first.";
+  if (teamBulkRefreshInFlight) {
+    const statusEl = document.getElementById("teamStatusSummary");
+    if (statusEl) statusEl.textContent = "Bulk refresh in progress — wait for it to finish.";
     return;
   }
-  const payload = teamFormToObject();
-  payload.fetch_board_metrics = true;
-  try {
-    const res = await fetch("/run-team-posture", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      document.getElementById("teamStatusSummary").textContent = JSON.stringify(data, null, 2);
-      document.getElementById("teamCsvPreview").textContent = JSON.stringify(data, null, 2);
+  ensureLiveModeForTeamRefresh();
+  return enqueueTeamJira(async () => {
+    updateTeamReportPeriodLabel();
+    const member = activeTeamMember();
+    if (!member) {
+      document.getElementById("teamStatusSummary").textContent = "Add and select a member first.";
+      document.getElementById("teamCsvPreview").textContent = "Add and select a member first.";
       return;
     }
-    latestTeamPosturePayload = data;
-    if (member && member.id) {
+    const payload = teamFormToObject();
+    payload.fetch_board_metrics = false;
+    const statusEl = document.getElementById("teamStatusSummary");
+    if (statusEl) statusEl.textContent = `Refreshing ${member.name} from Jira…`;
+    try {
+      const data = await fetchTeamPosture(payload);
       teamPayloadByMemberId[member.id] = data;
+      if (!latestBoardMetricsLoaded) {
+        await ensureTeamBoardMetrics();
+      }
+      selectTeamMember(member.id);
+      updateTeamReportPeriodLabel();
+    } catch (err) {
+      const msg = `Network error calling /run-team-posture: ${err && err.message ? err.message : String(err)}. Wait a few seconds and retry.`;
+      if (statusEl) statusEl.textContent = msg;
+      document.getElementById("teamCsvPreview").textContent = msg;
     }
-    if (!applyBoardMetricsFromResponse(data)) {
-      await ensureTeamBoardMetrics();
-    } else if (data.board_metrics_error) {
-      const noteEl = document.getElementById("teamRollupNote");
-      if (noteEl) noteEl.textContent = `Pipeline backlog error: ${data.board_metrics_error}`;
-    }
-    renderTeamPostureMetrics(data);
-    updateTeamReportPeriodLabel();
-  } catch (err) {
-    const msg = `Network error calling /run-team-posture: ${err && err.message ? err.message : String(err)}. If this happens after edits, wait for Flask reload or restart app.py and retry.`;
-    document.getElementById("teamStatusSummary").textContent = msg;
-    document.getElementById("teamCsvPreview").textContent = msg;
-  }
+  });
 }
 
 async function refreshAllTeamMembers() {
-  updateTeamReportPeriodLabel();
-  if (!teamMembers.length) {
-    document.getElementById("teamStatusSummary").textContent = "Add and select a member first.";
-    document.getElementById("teamCsvPreview").textContent = "Add and select a member first.";
-    return;
-  }
-  const base = teamFormToObject();
-  delete base.assignee_username;
-  delete base.member_name;
-  base.member_usernames = teamMembers.map((m) => m.username).filter(Boolean);
-  const boardTask = ensureTeamBoardMetrics();
-  let successCount = 0;
-  let boardFromPosture = false;
-  for (let i = 0; i < teamMembers.length; i++) {
-    const member = teamMembers[i];
-    const payload = {
-      ...base,
-      assignee_username: member.username,
-      member_name: member.name,
-      fetch_board_metrics: !boardFromPosture && i === 0,
-    };
-    const res = await fetch("/run-team-posture", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      continue;
+  if (teamBulkRefreshInFlight) return teamBulkRefreshInFlight;
+  teamBulkRefreshInFlight = (async () => {
+    const statusEl = document.getElementById("teamStatusSummary");
+    const previewEl = document.getElementById("teamCsvPreview");
+    const refreshBtn = document.getElementById("teamRefreshBtn");
+    const refreshBtnMain = document.getElementById("teamRefreshBtnMain");
+    const refreshActiveBtn = document.getElementById("teamRefreshActiveBtn");
+    try {
+    ensureLiveModeForTeamRefresh();
+    updateTeamReportPeriodLabel();
+    if (!teamMembers.length) {
+      if (statusEl) statusEl.textContent = "Add and select a member first.";
+      if (previewEl) previewEl.textContent = "Add and select a member first.";
+      return;
     }
-    teamPayloadByMemberId[member.id] = data;
-    successCount += 1;
-    if (applyBoardMetricsFromResponse(data)) boardFromPosture = true;
-  }
-  await boardTask;
-  if (!latestBoardMetricsLoaded) await ensureTeamBoardMetrics();
-  if (!activeTeamMemberId && teamMembers[0]) {
-    activeTeamMemberId = teamMembers[0].id;
-  }
-  const activePayload = teamPayloadByMemberId[activeTeamMemberId];
-  if (activePayload) {
-    latestTeamPosturePayload = activePayload;
-    renderTeamPostureMetrics(activePayload);
-  }
-  if (!activePayload) {
-    document.getElementById("teamStatusSummary").textContent = `No member data loaded (${successCount}/${teamMembers.length} successful).`;
-  }
-  updateTeamReportPeriodLabel();
-  updateTeamRollupHeader();
-  if (snapshotViewMode.team === "live") {
-    await refreshOpsMetricTrends(null, "live");
-  }
+    if (refreshBtn) refreshBtn.disabled = true;
+    if (refreshBtnMain) refreshBtnMain.disabled = true;
+    if (refreshActiveBtn) refreshActiveBtn.disabled = true;
+    if (statusEl) statusEl.textContent = `Refreshing ${teamMembers.length} member(s) from Jira…`;
+    latestPipelineBacklogLoaded = false;
+    latestBoardMetricsLoaded = false;
+    latestBoardMetrics = {};
+    updateTeamRollupHeader();
+    const base = teamFormToObject();
+    delete base.assignee_username;
+    delete base.member_name;
+    base.member_usernames = teamMembers.map((m) => m.username).filter(Boolean);
+    const pipelinePromise = enqueueTeamJira(() => refreshPipelineBacklogCount());
+    let successCount = 0;
+    let lastError = "";
+      for (let i = 0; i < teamMembers.length; i++) {
+        const member = teamMembers[i];
+        if (statusEl) {
+          statusEl.textContent = `Refreshing ${i + 1}/${teamMembers.length}: ${member.name}…`;
+        }
+        try {
+          await enqueueTeamJira(async () => {
+            const payload = {
+              ...base,
+              assignee_username: member.username,
+              member_name: member.name,
+              fetch_board_metrics: false,
+            };
+            const data = await fetchTeamPosture(payload);
+            teamPayloadByMemberId[member.id] = data;
+            successCount += 1;
+          });
+        } catch (err) {
+          const msg = err && err.message ? err.message : String(err);
+          lastError = msg;
+          if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("CONNECTION")) {
+            lastError = "Connection lost — server may have restarted. Wait a few seconds, restart app.py if needed, then retry.";
+            throw err;
+          }
+        }
+      }
+      try {
+        await pipelinePromise;
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        if (!lastError) lastError = msg;
+        console.warn("Pipeline backlog during bulk refresh:", err);
+      }
+      if (!latestBoardMetricsLoaded) {
+        if (statusEl) {
+          statusEl.textContent = latestPipelineBacklogLoaded
+            ? "Loading team closed metrics…"
+            : "Loading team board metrics (pipeline / closed)…";
+        }
+        try {
+          if (!latestPipelineBacklogLoaded) {
+            await enqueueTeamJira(() => refreshPipelineBacklogCount());
+          }
+          if (!latestBoardMetricsLoaded) {
+            await enqueueTeamJira(() => refreshTeamClosedBoardMetrics());
+          }
+        } catch (err) {
+          lastError = err && err.message ? err.message : String(err);
+        }
+      }
+      if (!activeTeamMemberId && teamMembers[0]) {
+        activeTeamMemberId = teamMembers[0].id;
+      }
+      if (activeTeamMemberId) {
+        selectTeamMember(activeTeamMemberId);
+        if (statusEl) {
+          statusEl.textContent = successCount === teamMembers.length
+            ? `All ${successCount} member(s) refreshed from Jira.`
+            : `Loaded ${successCount}/${teamMembers.length} member(s).${lastError ? " " + lastError : ""}`;
+        }
+      } else if (statusEl) {
+        statusEl.textContent = lastError
+          || `No member data loaded (${successCount}/${teamMembers.length} successful).`;
+      }
+      updateTeamReportPeriodLabel();
+      updateTeamRollupHeader();
+      try {
+        await refreshOpsMetricTrendsForCurrentMode();
+      } catch (err) {
+        console.warn("Metric trends refresh skipped:", err);
+      }
+    } catch (err) {
+      if (!lastError) {
+        lastError = err && err.message ? err.message : String(err);
+      }
+      if (successCount > 0 && !latestBoardMetricsLoaded) {
+        try {
+          await ensureTeamBoardMetrics();
+        } catch (boardErr) {
+          console.warn("Board metrics after partial refresh:", boardErr);
+        }
+      }
+      if (statusEl) {
+        statusEl.textContent = lastError || "Refresh stopped due to a connection error.";
+      }
+      updateTeamRollupHeader();
+      updateTeamDataModeHint();
+    } finally {
+      if (refreshBtn) refreshBtn.disabled = false;
+      if (refreshBtnMain) refreshBtnMain.disabled = false;
+      if (refreshActiveBtn) refreshActiveBtn.disabled = false;
+      teamBulkRefreshInFlight = null;
+      renderTeamMemberIcons();
+      updateTeamDataModeHint();
+    }
+  })();
+  return teamBulkRefreshInFlight;
 }
 
 function formatReportDatetimeLocal(value) {
@@ -1787,9 +2526,13 @@ function formatDeltaLine(delta) {
   if (!delta || delta.change === undefined) return "—";
   const ch = Number(delta.change);
   const arrow = ch > 0 ? "▲" : ch < 0 ? "▼" : "•";
-  const pct = delta.pct_change != null ? ` (${delta.pct_change > 0 ? "+" : ""}${delta.pct_change}%)` : "";
-  const src = delta._source === "manual" ? "manual baseline" : "prior report";
-  return `${arrow} ${ch > 0 ? "+" : ""}${ch}${pct} vs ${src}`;
+  if (delta.pct_change != null && delta.pct_change !== "") {
+    const pct = Number(delta.pct_change);
+    const sign = pct > 0 ? "+" : "";
+    return `${arrow} ${sign}${pct}%`;
+  }
+  if (ch === 0) return `${arrow} 0%`;
+  return "—";
 }
 
 function deltaTone(metricKey, change) {
@@ -1880,16 +2623,39 @@ function hydrateLegacyFromDisplay(data) {
   document.getElementById("legacyInsights").textContent = lines.join("\\n") || "Archived report.";
 }
 
+function opsMemberPayloadFromArchive(memberView) {
+  return {
+    member: { name: memberView.name, assignee_username: memberView.username },
+    metrics: memberView.metrics || {},
+    status_distribution: memberView.status_distribution || {},
+    label_distribution: memberView.label_distribution || {},
+    oldest_open: memberView.oldest_open || {},
+    raw_rows: [],
+    _fromArchive: true,
+  };
+}
+
 function hydrateOpsFromDisplay(data) {
   const board = data.board || {};
   latestBoardMetrics = {
     pipeline_backlog_count: board.pipeline_backlog_count,
     closed_cssd_csd_team_count: board.closed_cssd_csd_team_count,
+    queue_backlog_count: board.queue_backlog_count,
+    in_progress_count: board.in_progress_count,
+    resolved_in_period_count: board.resolved_in_period_count,
   };
   latestBoardMetricsLoaded = true;
+  latestPipelineBacklogLoaded = board.pipeline_backlog_count != null;
   board._archiveNote = data.note ? `Archived: ${data.note}` : "Archived official report (not live Jira).";
   updateTeamRollupHeader(board);
   const members = data.members || [];
+  teamPayloadByMemberId = {};
+  for (const memberView of members) {
+    const uname = (memberView.username || "").toLowerCase();
+    const local = teamMembers.find((m) => (m.username || "").toLowerCase() === uname);
+    if (!local) continue;
+    teamPayloadByMemberId[local.id] = opsMemberPayloadFromArchive(memberView);
+  }
   if (members.length && !activeTeamMemberId) {
     activeTeamMemberId = teamMembers[0] ? teamMembers[0].id : null;
   }
@@ -1898,27 +2664,11 @@ function hydrateOpsFromDisplay(data) {
   if (activeMember) {
     memberView = members.find((m) => (m.username || "").toLowerCase() === (activeMember.username || "").toLowerCase());
   }
-  if (memberView) {
-    latestTeamPosturePayload = {
-      member: { name: memberView.name, assignee_username: memberView.username },
-      metrics: memberView.metrics || {},
-      status_distribution: memberView.status_distribution || {},
-      label_distribution: memberView.label_distribution || {},
-      oldest_open: memberView.oldest_open || {},
-      raw_rows: [],
-    };
-    renderTeamPostureMetrics(latestTeamPosturePayload);
-  } else if (members[0]) {
-    const m0 = members[0];
-    latestTeamPosturePayload = {
-      member: { name: m0.name, assignee_username: m0.username },
-      metrics: m0.metrics || {},
-      status_distribution: m0.status_distribution || {},
-      label_distribution: m0.label_distribution || {},
-      oldest_open: m0.oldest_open || {},
-      raw_rows: [],
-    };
-    renderTeamPostureMetrics(latestTeamPosturePayload);
+  updateTeamDataModeHint();
+  if (activeTeamMemberId) {
+    selectTeamMember(activeTeamMemberId);
+  } else if (teamMembers[0]) {
+    selectTeamMember(teamMembers[0].id);
   }
 }
 
@@ -1934,10 +2684,13 @@ async function applySnapshotSelection(reportUiKey) {
     setArchiveBanner(reportUiKey, false, "");
     if (reportUiKey === "team") {
       latestBoardMetricsLoaded = false;
+      latestPipelineBacklogLoaded = false;
       latestBoardMetrics = {};
       updateTeamRollupHeader();
-      await refreshOpsMetricTrends(null, "live");
-      if (teamMembers.length) await ensureTeamBoardMetrics();
+      updateTeamDataModeHint();
+      if (activeTeamMemberId) {
+        selectTeamMember(activeTeamMemberId);
+      }
     }
     return;
   }
@@ -1966,9 +2719,6 @@ async function initReportSnapshots(reportUiKey) {
   } else {
     snapshotViewMode[reportUiKey] = "live";
     setArchiveBanner(reportUiKey, false, "");
-    if (reportUiKey === "team" && teamMembers.length) {
-      void ensureTeamBoardMetrics();
-    }
   }
 }
 
@@ -1991,8 +2741,16 @@ async function renderMetricSparkline(wrap, reportId, metricKey, memberUsername, 
   let url = `/snapshots/trends?report_id=${encodeURIComponent(reportId)}&metric_key=${encodeURIComponent(metricKey)}`;
   if (memberUsername) url += `&member_username=${encodeURIComponent(memberUsername)}`;
   if (toSnapshotId) url += `&to_snapshot_id=${toSnapshotId}`;
-  const res = await fetch(url);
-  const series = await res.json();
+  let res;
+  let series;
+  try {
+    res = await fetch(url);
+    series = await res.json();
+  } catch (err) {
+    console.warn("Sparkline fetch failed:", metricKey, err);
+    metricSparkCharts[key] = null;
+    return;
+  }
   const points = series.data || [];
   if (!res.ok || points.length < 2) {
     metricSparkCharts[key] = null;
@@ -2031,6 +2789,13 @@ async function renderMetricSparkline(wrap, reportId, metricKey, memberUsername, 
 async function applyDeltaToCard(card, reportId, metricKey, memberUsername, snapshotId, liveBoard) {
   const sub = card.querySelector(".metric-trend-sub");
   if (!sub) return;
+  const valueEl = card.querySelector(".value");
+  if (valueEl && valueEl.textContent.trim() === "--") {
+    sub.textContent = "—";
+    sub.className = "metric-trend-sub";
+    sub.removeAttribute("title");
+    return;
+  }
   let deltas = [];
   let baselineSource = "prior report";
   if (snapshotId) {
@@ -2066,6 +2831,9 @@ async function applyDeltaToCard(card, reportId, metricKey, memberUsername, snaps
   d._source = baselineSource === "manual" ? "manual baseline" : "prior report";
   sub.textContent = formatDeltaLine(d);
   sub.className = `metric-trend-sub ${deltaTone(metricKey, d.change)}`;
+  const ch = Number(d.change);
+  const pct = d.pct_change != null ? `${d.pct_change}%` : "";
+  sub.title = `Change ${ch > 0 ? "+" : ""}${ch}${pct ? ` (${pct})` : ""} vs ${d._source}`;
 }
 
 async function refreshOpsMetricTrends(snapshotId, mode) {
@@ -2080,17 +2848,20 @@ async function refreshOpsMetricTrends(snapshotId, mode) {
   for (const card of cards) {
     const metricKey = card.getAttribute("data-metric-key");
     const scope = card.getAttribute("data-metric-scope");
-    const wrap = card.querySelector(".metric-spark-wrap");
     const uname = scope === "member" ? memberUsername : null;
     if (scope === "member" && !uname) {
-      clearSparklineWrap(wrap);
+      const sub = card.querySelector(".metric-trend-sub");
+      if (sub) { sub.textContent = "—"; sub.className = "metric-trend-sub"; }
       continue;
     }
-    await renderMetricSparkline(wrap, reportId, metricKey, uname, snapshotId || null);
-    if (mode === "archive" && snapshotId) {
-      await applyDeltaToCard(card, reportId, metricKey, uname, snapshotId, null);
-    } else if (mode === "live") {
-      await applyDeltaToCard(card, reportId, metricKey, uname, null, scope === "board" ? liveBoard : { memberMetrics: (latestTeamPosturePayload && latestTeamPosturePayload.metrics) || {} });
+    try {
+      if (mode === "archive" && snapshotId) {
+        await applyDeltaToCard(card, reportId, metricKey, uname, snapshotId, null);
+      } else if (mode === "live") {
+        await applyDeltaToCard(card, reportId, metricKey, uname, null, scope === "board" ? liveBoard : { memberMetrics: (latestTeamPosturePayload && latestTeamPosturePayload.metrics) || {} });
+      }
+    } catch (err) {
+      console.warn("Metric card trend failed:", metricKey, err);
     }
   }
 }
@@ -2183,6 +2954,35 @@ async function saveReportSnapshot(reportUiKey) {
   await applySnapshotSelection(reportUiKey);
 }
 
+const REPORT_MOBILE_TITLES = {
+  csms: "Executive Report",
+  team: "Operations Team",
+  legacy: "Ticket trend",
+  notes: "Notes",
+  auth: "Auth",
+};
+
+function setNavOpen(open) {
+  const nav = document.getElementById("appNav");
+  const overlay = document.getElementById("navOverlay");
+  const toggle = document.getElementById("navMenuToggle");
+  if (!nav || !toggle) return;
+  nav.classList.toggle("is-open", open);
+  if (overlay) {
+    overlay.hidden = !open;
+    overlay.setAttribute("aria-hidden", open ? "false" : "true");
+  }
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  toggle.setAttribute("aria-label", open ? "Close navigation menu" : "Open navigation menu");
+  toggle.textContent = open ? "✕" : "☰";
+  toggle.title = open ? "Close menu" : "Menu";
+  document.body.classList.toggle("nav-open", open);
+}
+
+function closeMobileNav() {
+  setNavOpen(false);
+}
+
 function setActiveReport(report) {
   document.querySelectorAll(".report-scope-csms").forEach((el) => { el.hidden = report !== "csms"; });
   document.querySelectorAll(".report-scope-team").forEach((el) => { el.hidden = report !== "team"; });
@@ -2192,7 +2992,13 @@ function setActiveReport(report) {
   document.querySelectorAll(".report-tab").forEach((btn) => {
     btn.classList.toggle("active", btn.getAttribute("data-report") === report);
   });
+  const mobileTitle = document.getElementById("appMobileTitle");
+  if (mobileTitle) {
+    mobileTitle.textContent = REPORT_MOBILE_TITLES[report] || "CSMS Reporting";
+  }
+  closeMobileNav();
   window.scrollTo({ top: 0, behavior: "smooth" });
+  requestAnimationFrame(() => scheduleChartResize());
   if (report === "team") {
     updateTeamReportPeriodLabel();
     initReportSnapshots("team");
@@ -2203,6 +3009,24 @@ function setActiveReport(report) {
   }
   if (report === "csms") initReportSnapshots("csms");
 }
+
+document.getElementById("navMenuToggle")?.addEventListener("click", () => {
+  const nav = document.getElementById("appNav");
+  setNavOpen(!nav?.classList.contains("is-open"));
+});
+document.getElementById("navOverlay")?.addEventListener("click", closeMobileNav);
+window.addEventListener("resize", () => {
+  if (window.innerWidth > 768) closeMobileNav();
+  scheduleChartResize();
+});
+if (typeof ResizeObserver !== "undefined") {
+  const chartResizeObserver = new ResizeObserver(() => scheduleChartResize());
+  const wrapEl = document.querySelector(".wrap");
+  if (wrapEl) chartResizeObserver.observe(wrapEl);
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeMobileNav();
+});
 
 document.querySelectorAll(".report-tab").forEach((btn) => {
   btn.addEventListener("click", () => setActiveReport(btn.getAttribute("data-report")));
@@ -2283,10 +3107,6 @@ function renderCsmsHealth(data) {
   `;
 }
 
-function destroyChart(instance) {
-  if (instance) instance.destroy();
-}
-
 const LEGACY_KPI_TITLES = [
   "Number of issues returned by your current legacy filters and caps.",
   "Total status changes counted across those issues.",
@@ -2314,6 +3134,7 @@ function renderLegacyKpis(kpis) {
 function renderLegacyCharts(charts) {
   const dailyCtx = document.getElementById("legacyDailyChart").getContext("2d");
   const statusCtx = document.getElementById("legacyStatusChart").getContext("2d");
+  const theme = getChartTheme();
   destroyChart(legacyCharts.status);
   destroyChart(legacyCharts.daily);
 
@@ -2322,11 +3143,14 @@ function renderLegacyCharts(charts) {
     type: "doughnut",
     data: {
       labels: statusEntries.map(([k]) => k),
-      datasets: [{ data: statusEntries.map(([, v]) => v) }],
+      datasets: [chartPieDataset(statusEntries.map(([, v]) => v), theme)],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      plugins: chartThemePlugins(theme, {
+        legend: { position: "bottom" },
+      }),
     },
   });
 
@@ -2343,8 +3167,11 @@ function renderLegacyCharts(charts) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      plugins: chartThemePlugins(theme),
+      scales: chartThemeScales(theme),
     },
   });
+  scheduleChartResize();
 }
 
 function renderLegacyStatusSummary(charts) {
@@ -2389,6 +3216,7 @@ function renderCsmsCharts(charts) {
   const dailyCtx = document.getElementById("dailyTrendChart").getContext("2d");
   const statusCtx = document.getElementById("statusChart").getContext("2d");
   const topCtx = document.getElementById("topCategoryChart").getContext("2d");
+  const theme = getChartTheme();
 
   destroyChart(csmsCharts.daily);
   destroyChart(csmsCharts.status);
@@ -2403,7 +3231,8 @@ function renderCsmsCharts(charts) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { title: { display: true, text: "Daily Ticket Trend by Component" } },
+      plugins: chartThemePlugins(theme, { title: { display: true, text: "Daily Ticket Trend by Component" } }),
+      scales: chartThemeScales(theme),
     }
   });
 
@@ -2412,15 +3241,12 @@ function renderCsmsCharts(charts) {
     type: "doughnut",
     data: {
       labels: statusEntries.map(([k]) => k),
-      datasets: [{ data: statusEntries.map(([,v]) => v) }]
+      datasets: [chartPieDataset(statusEntries.map(([,v]) => v), theme)],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: {
-        title: { display: false },
-        legend: { display: false },
-      },
+      plugins: chartThemePlugins(theme, { title: { display: false }, legend: { display: false } }),
     }
   });
 
@@ -2434,9 +3260,11 @@ function renderCsmsCharts(charts) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { title: { display: true, text: "Top 5 Issue Type or Component Trends" } },
+      plugins: chartThemePlugins(theme, { title: { display: true, text: "Top 5 Issue Type or Component Trends" } }),
+      scales: chartThemeScales(theme),
     }
   });
+  scheduleChartResize();
 }
 
 document.getElementById("csmsForm").addEventListener("submit", async (e) => {
@@ -2478,8 +3306,24 @@ document.getElementById("legacyRefreshBtn").addEventListener("click", async () =
   await refreshLegacyDashboard(payload);
 });
 
-document.getElementById("teamRefreshBtn").addEventListener("click", async () => {
-  await refreshAllTeamMembers();
+async function onTeamRefreshAllClick() {
+  try {
+    await refreshAllTeamMembers();
+  } catch (err) {
+    console.error("Refresh all failed:", err);
+    const statusEl = document.getElementById("teamStatusSummary");
+    if (statusEl) {
+      statusEl.textContent = `Refresh failed: ${err && err.message ? err.message : String(err)}`;
+    }
+    teamBulkRefreshInFlight = null;
+    renderTeamMemberIcons();
+  }
+}
+
+document.getElementById("teamRefreshBtn")?.addEventListener("click", onTeamRefreshAllClick);
+document.getElementById("teamRefreshBtnMain")?.addEventListener("click", onTeamRefreshAllClick);
+document.getElementById("teamRefreshActiveBtn")?.addEventListener("click", () => {
+  void refreshTeamPosture();
 });
 
 document.getElementById("teamAddMemberBtn").addEventListener("click", () => {
@@ -2621,6 +3465,7 @@ renderTeamMemberIcons();
 updateTeamReportPeriodLabel();
 updateLegacyReportPeriodLabel();
 updateTeamRollupHeader();
+updateTeamDataModeHint();
 
 renderCsmsKpis({
   backlog: { period2: "--", trend: 0 },
@@ -2663,6 +3508,7 @@ document.getElementById("teamBaselineSaveBtn")?.addEventListener("click", async 
 });
 
 initReportSnapshots("csms");
+applyTheme(localStorage.getItem("theme") || "dark");
 </script>
 </body>
 </html>
@@ -2747,7 +3593,12 @@ def build_jql(params: Dict[str, Any]) -> str:
     if extra_jql:
         clauses.append(f"({extra_jql})")
 
-    return " AND ".join(clauses) if clauses else "order by created desc"
+    if not clauses:
+        raise ValueError(
+            "JQL requires at least one filter: projects, issue types, statuses, assignees, "
+            "labels, start/end dates, extra JQL, or a custom JQL override."
+        )
+    return " AND ".join(clauses) + " ORDER BY created DESC"
 
 
 def calculate_percent_trend(period1: int, period2: int) -> float:
@@ -3151,6 +4002,33 @@ def fetch_issues(
     return issues
 
 
+def count_jira_issues(
+    base_url: str,
+    jql: str,
+    verify_ssl: bool,
+    timeout: int = 120,
+) -> int:
+    """Return Jira search `total` without downloading issue pages (maxResults=0)."""
+    auth = get_auth()
+    session = requests.Session()
+    resp = session.get(
+        base_url,
+        params={"jql": jql, "startAt": 0, "maxResults": 0},
+        auth=auth,
+        verify=verify_ssl,
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return int(resp.json().get("total", 0))
+
+
+def team_board_issue_fetch_cap(max_issues: int) -> int:
+    """Cap board-level issue scans when the form sends 0 (unlimited)."""
+    if max_issues and max_issues > 0:
+        return max_issues
+    return 500
+
+
 def make_activity_rows(issue: Dict[str, Any], include_workflow_events: bool, block_start: Optional[time], block_end: Optional[time]) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     key = issue.get("key", "")
@@ -3298,7 +4176,16 @@ def export_run(params: Dict[str, Any]) -> Dict[str, Any]:
     block_start = parse_time_value(params.get("time_block_start"))
     block_end = parse_time_value(params.get("time_block_end"))
 
-    issues = fetch_issues(base_url, jql, page_size, max_issues, verify_ssl)
+    try:
+        issues = fetch_issues(base_url, jql, page_size, max_issues, verify_ssl, include_changelog=True)
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        if status_code == 500:
+            issues = fetch_issues(
+                base_url, jql, page_size, max_issues, verify_ssl, include_changelog=False
+            )
+        else:
+            raise
 
     summary_rows: List[Dict[str, Any]] = []
     activity_rows: List[Dict[str, Any]] = []
@@ -3633,6 +4520,21 @@ def build_team_board_jql(params: Dict[str, Any]) -> str:
         if clause:
             clauses.append(clause)
     return (" AND ".join(clauses) if clauses else "order by created desc") + " ORDER BY created DESC"
+
+
+def build_team_closed_board_jql(params: Dict[str, Any]) -> str:
+    """Narrow JQL for TEAM CLOSED: CSSD/CSD in Closed status, optional report updated window."""
+    clauses: List[str] = [
+        list_clause("project", list(TEAM_OPS_CLOSED_PROJECT_KEYS)) or 'project in (CSSD, CSD)',
+        'status = Closed',
+    ]
+    start_dt = normalize_dt_local(params.get("start_dt"))
+    end_dt = normalize_dt_local(params.get("end_dt"))
+    if start_dt:
+        clauses.append(f'updated >= "{start_dt}"')
+    if end_dt:
+        clauses.append(f'updated <= "{end_dt}"')
+    return " AND ".join(clauses) + " ORDER BY updated DESC"
 
 
 def build_pipeline_backlog_jql(params: Dict[str, Any]) -> str:
@@ -4107,7 +5009,38 @@ def count_pipeline_backlog_from_jira(issues: List[Dict[str, Any]]) -> int:
     return len(issues)
 
 
-def build_team_board_metrics_payload(params: Dict[str, Any]) -> Dict[str, Any]:
+def build_pipeline_backlog_count_payload(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Fast pipeline backlog: Jira search total only (no issue pages)."""
+    base_url = (params.get("base_url") or "").strip()
+    if not base_url:
+        raise ValueError("base_url is required")
+    verify_ssl = bool(params.get("verify_ssl", True))
+    pipeline_jql = build_pipeline_backlog_jql(params)
+    warnings: List[str] = []
+    try:
+        pipeline_count = count_jira_issues(base_url, pipeline_jql, verify_ssl)
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        if status_code == 500:
+            pipeline_count = count_jira_issues(base_url, pipeline_jql, verify_ssl)
+            warnings.append("Pipeline backlog loaded after Jira 500 retry.")
+        else:
+            raise
+    print(
+        f"[pipeline-backlog-count] count={pipeline_count} jql={pipeline_jql!r}",
+        flush=True,
+    )
+    return {
+        "pipeline_backlog_count": pipeline_count,
+        "pipeline_backlog_jql": pipeline_jql,
+        "jql": pipeline_jql,
+        "warnings": warnings,
+        "board_metrics": {"pipeline_backlog_count": pipeline_count},
+    }
+
+
+def build_team_closed_board_metrics_payload(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Team closed rollup (may fetch capped issue pages with changelog)."""
     base_url = (params.get("base_url") or "").strip()
     if not base_url:
         raise ValueError("base_url is required")
@@ -4115,58 +5048,74 @@ def build_team_board_metrics_payload(params: Dict[str, Any]) -> Dict[str, Any]:
     max_issues = int(params.get("max_issues") or 0)
     verify_ssl = bool(params.get("verify_ssl", True))
     project_rules = {"CSSD": "Closed", "CSD": "Ready For Production Users"}
-    pipeline_jql = build_pipeline_backlog_jql(params)
-    closed_jql = build_team_board_jql(params)
+    closed_jql = build_team_closed_board_jql(params)
+    closed_fetch_cap = team_board_issue_fetch_cap(max_issues)
     warnings: List[str] = []
-
-    try:
-        pipeline_issues = fetch_jira_issues(
-            base_url, pipeline_jql, page_size, max_issues, verify_ssl, include_changelog=False
-        )
-    except requests.HTTPError as exc:
-        status_code = exc.response.status_code if exc.response is not None else None
-        if status_code == 500:
-            pipeline_issues = fetch_jira_issues(
-                base_url, pipeline_jql, page_size, max_issues, verify_ssl, include_changelog=False
-            )
-            warnings.append("Pipeline backlog loaded after Jira 500 retry.")
-        else:
-            raise
-
     closed_issues: List[Dict[str, Any]] = []
     try:
         closed_issues = fetch_jira_issues(
-            base_url, closed_jql, page_size, max_issues, verify_ssl, include_changelog=True
+            base_url,
+            closed_jql,
+            page_size,
+            closed_fetch_cap,
+            verify_ssl,
+            include_changelog=True,
         )
     except requests.HTTPError as exc:
         status_code = exc.response.status_code if exc.response is not None else None
         if status_code == 500:
             closed_issues = fetch_jira_issues(
-                base_url, closed_jql, page_size, max_issues, verify_ssl, include_changelog=False
+                base_url,
+                closed_jql,
+                page_size,
+                closed_fetch_cap,
+                verify_ssl,
+                include_changelog=True,
             )
-            warnings.append(
-                "Team closed metrics loaded without changelog; contributed tickets may be missing."
-            )
+            warnings.append("Team closed metrics loaded after Jira 500 retry.")
         else:
             raise
-
+    if closed_fetch_cap and len(closed_issues) >= closed_fetch_cap:
+        warnings.append(
+            f"Team closed count uses at most {closed_fetch_cap} most recently updated "
+            "CSSD/CSD Closed issues (changelog attribution)."
+        )
     csd_assigned_dev_field = (params.get("csd_assigned_dev_field") or "customfield_14700").strip()
     member_usernames = params.get("member_usernames") or []
     if isinstance(member_usernames, str):
         member_usernames = parse_csv_list(member_usernames)
-    board_metrics: Dict[str, Any] = {
-        "pipeline_backlog_count": count_pipeline_backlog_from_jira(pipeline_issues),
-    }
+    board_metrics: Dict[str, Any] = {}
     if member_usernames:
         board_metrics["closed_cssd_csd_team_count"] = count_closed_cssd_csd_team_deduped(
             closed_issues, member_usernames, csd_assigned_dev_field, project_rules
         )
-    pipeline_count = board_metrics["pipeline_backlog_count"]
-    print(
-        f"[team-board-metrics] pipeline_backlog_count={pipeline_count} "
-        f"pipeline_jql={pipeline_jql!r}",
-        flush=True,
-    )
+    return {
+        "closed_team_jql": closed_jql,
+        "warnings": warnings,
+        "board_metrics": board_metrics,
+    }
+
+
+def build_team_board_metrics_payload(params: Dict[str, Any]) -> Dict[str, Any]:
+    skip_pipeline = bool(params.get("skip_pipeline"))
+    skip_closed = bool(params.get("skip_closed"))
+    warnings: List[str] = []
+    board_metrics: Dict[str, Any] = {}
+    pipeline_jql = ""
+    closed_jql = ""
+
+    if not skip_pipeline:
+        pipe_payload = build_pipeline_backlog_count_payload(params)
+        pipeline_jql = pipe_payload.get("pipeline_backlog_jql") or ""
+        warnings.extend(pipe_payload.get("warnings") or [])
+        board_metrics.update(pipe_payload.get("board_metrics") or {})
+
+    if not skip_closed:
+        closed_payload = build_team_closed_board_metrics_payload(params)
+        closed_jql = closed_payload.get("closed_team_jql") or ""
+        warnings.extend(closed_payload.get("warnings") or [])
+        board_metrics.update(closed_payload.get("board_metrics") or {})
+
     return {
         "jql": pipeline_jql,
         "pipeline_backlog_jql": pipeline_jql,
@@ -4577,6 +5526,10 @@ def build_team_posture_payload(params: Dict[str, Any]) -> Dict[str, Any]:
         "member": {"name": member_name, "assignee_username": assignee_username},
         "jql": jql,
         "broad_jql": broad_jql,
+        "query_meta": {
+            "assignee_issue_count": len(issues),
+            "broad_issue_count": len(broad_issues),
+        },
         "warnings": warnings,
         "metrics": {
             # Back-compat: historically "resolved_count" counted owned resolved tickets only.
@@ -4692,8 +5645,11 @@ def index():
 
 @app.route("/preview-jql", methods=["POST"])
 def preview_jql():
-    params = request.get_json(force=True)
-    return jsonify({"jql": build_jql(params)})
+    try:
+        params = request.get_json(force=True)
+        return jsonify({"jql": build_jql(params)})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
 
 
 @app.route("/run-export", methods=["POST"])
@@ -4792,7 +5748,10 @@ def run_legacy_dashboard():
 def run_team_posture():
     try:
         params = request.get_json(force=True)
+        member_label = (params.get("member_name") or params.get("assignee_username") or "?").strip()
+        print(f"[run-team-posture] start member={member_label}", flush=True)
         payload = build_team_posture_payload(params)
+        print(f"[run-team-posture] done member={member_label}", flush=True)
         out_dir = Path(tempfile.mkdtemp(prefix="team_posture_"))
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_member = re.sub(r"[^A-Za-z0-9_-]+", "_", payload["member"]["name"])[:40] or "member"
@@ -4861,6 +5820,7 @@ def run_team_posture():
         details = exc.response.text if exc.response is not None else str(exc)
         return jsonify({"error": f"HTTP error: {exc}", "details": details}), 400
     except Exception as exc:
+        print(f"[run-team-posture] error: {exc}", flush=True)
         return jsonify({"error": str(exc)}), 400
 
 
@@ -4942,15 +5902,35 @@ def download():
     return send_file(path, as_attachment=True)
 
 
-@app.route("/run-team-board-metrics", methods=["POST"])
-def run_team_board_metrics():
+@app.route("/run-pipeline-backlog-count", methods=["POST"])
+def run_pipeline_backlog_count():
     try:
-        payload = build_team_board_metrics_payload(request.get_json(force=True))
+        print("[run-pipeline-backlog-count] start", flush=True)
+        payload = build_pipeline_backlog_count_payload(request.get_json(force=True))
+        print("[run-pipeline-backlog-count] done", flush=True)
         return jsonify(payload)
     except requests.HTTPError as exc:
         details = exc.response.text if exc.response is not None else str(exc)
+        print(f"[run-pipeline-backlog-count] HTTP error: {exc}", flush=True)
         return jsonify({"error": f"HTTP error: {exc}", "details": details}), 400
     except Exception as exc:
+        print(f"[run-pipeline-backlog-count] error: {exc}", flush=True)
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/run-team-board-metrics", methods=["POST"])
+def run_team_board_metrics():
+    try:
+        print("[run-team-board-metrics] start", flush=True)
+        payload = build_team_board_metrics_payload(request.get_json(force=True))
+        print("[run-team-board-metrics] done", flush=True)
+        return jsonify(payload)
+    except requests.HTTPError as exc:
+        details = exc.response.text if exc.response is not None else str(exc)
+        print(f"[run-team-board-metrics] HTTP error: {exc}", flush=True)
+        return jsonify({"error": f"HTTP error: {exc}", "details": details}), 400
+    except Exception as exc:
+        print(f"[run-team-board-metrics] error: {exc}", flush=True)
         return jsonify({"error": str(exc)}), 400
 
 
@@ -5056,6 +6036,26 @@ def snapshots_trends():
     )
 
 
+@app.route("/snapshots/label-trends", methods=["GET"])
+def snapshots_label_trends():
+    report_id = (request.args.get("report_id") or "ops").strip()
+    member_username = (request.args.get("member_username") or "").strip()
+    if not member_username:
+        return jsonify({"error": "member_username required"}), 400
+    top_n = int(request.args.get("top") or 10)
+    limit = int(request.args.get("limit") or 20)
+    to_snapshot_id = request.args.get("to_snapshot_id")
+    return jsonify(
+        snap_db.build_label_trend_series(
+            report_id,
+            member_username,
+            top_n=top_n,
+            limit=limit,
+            to_snapshot_id=int(to_snapshot_id) if to_snapshot_id else None,
+        )
+    )
+
+
 @app.route("/manual-baselines", methods=["GET", "POST"])
 def manual_baselines():
     if request.method == "GET":
@@ -5084,4 +6084,4 @@ def manual_baselines():
 if __name__ == "__main__":
     # Keep debug diagnostics but disable auto-reloader to avoid transient
     # connection resets/address-in-use during frequent file edits.
-    app.run(debug=True, use_reloader=False, port=5001)
+    app.run(debug=True, use_reloader=False, threaded=True, port=5001)

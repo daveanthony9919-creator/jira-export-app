@@ -555,6 +555,92 @@ def build_trend_series(
     }
 
 
+def _member_label_distribution_from_snapshot(
+    metrics: Dict[str, Any], member_username: str
+) -> Dict[str, Any]:
+    target = (member_username or "").strip().lower()
+    if not target:
+        return {}
+    members = (metrics.get("view") or {}).get("members") or []
+    if not isinstance(members, list):
+        return {}
+    for m in members:
+        if (m.get("username") or "").strip().lower() == target:
+            dist = m.get("label_distribution") or {}
+            return dist if isinstance(dist, dict) else {}
+    return {}
+
+
+def build_label_trend_series(
+    report_id: str,
+    member_username: str,
+    top_n: int = 10,
+    limit: int = 20,
+    to_snapshot_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Time series of top Jira label counts for one member across saved snapshots."""
+    target = (member_username or "").strip().lower()
+    if not target:
+        return {
+            "report_id": report_id,
+            "member_username": member_username,
+            "time_labels": [],
+            "datasets": [],
+            "top_labels": [],
+            "snapshot_count": 0,
+        }
+
+    snaps = list_snapshots(report_id, limit=500)
+    snaps = sorted(snaps, key=lambda s: s["captured_at"])
+    if to_snapshot_id:
+        cutoff = None
+        for s in snaps:
+            if s["id"] == to_snapshot_id:
+                cutoff = s["captured_at"]
+                break
+        if cutoff:
+            snaps = [s for s in snaps if s["captured_at"] <= cutoff]
+
+    rows: List[Tuple[str, str, Dict[str, Any]]] = []
+    label_totals: Dict[str, int] = {}
+    for s in snaps:
+        dist = _member_label_distribution_from_snapshot(s["metrics"], target)
+        if not dist:
+            continue
+        try:
+            dt = datetime.fromisoformat(s["captured_at"].replace("Z", "+00:00"))
+            time_label = dt.strftime("%m/%d %H:%M")
+        except ValueError:
+            time_label = (s["captured_at"] or "")[:16]
+        rows.append((time_label, s["captured_at"], dist))
+        for key, val in dist.items():
+            label_totals[str(key)] = label_totals.get(str(key), 0) + int(val or 0)
+
+    rows = rows[-limit:]
+    top_labels = [
+        k
+        for k, _ in sorted(label_totals.items(), key=lambda item: (-item[1], item[0]))[: max(1, top_n)]
+    ]
+
+    datasets: List[Dict[str, Any]] = []
+    for label in top_labels:
+        datasets.append(
+            {
+                "label": label,
+                "data": [int(dist.get(label, 0) or 0) for _, _, dist in rows],
+            }
+        )
+
+    return {
+        "report_id": report_id,
+        "member_username": member_username,
+        "time_labels": [r[0] for r in rows],
+        "datasets": datasets,
+        "top_labels": top_labels,
+        "snapshot_count": len(rows),
+    }
+
+
 def extract_metrics_for_save(report_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     if report_id == "exec":
         kpis = payload.get("kpis") or {}
