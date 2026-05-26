@@ -57,7 +57,7 @@ TEAM_PIPELINE_BACKLOG_CREATED_SINCE_DEFAULT = "2021-11-08"
 JIRA_SLA_TTR_FIELD = "customfield_10317"
 JIRA_SLA_TTFR_FIELD = "customfield_10318"
 LEGACY_SLA_SEARCH_FIELDS = (
-    "project,status,created,updated,resolutiondate,issuetype,issuelinks,"
+    "project,status,created,updated,resolutiondate,issuetype,issuelinks,labels,"
     f"{JIRA_SLA_TTR_FIELD},{JIRA_SLA_TTFR_FIELD}"
 )
 DEFAULT_LEGACY_TTR_STATUS_CSSD = "Closed"
@@ -656,6 +656,10 @@ HTML = """
       font-size: 12px;
       color: var(--muted);
     }
+    .legacy-labels-block {
+      margin-top: 4px;
+      scroll-margin-top: 72px;
+    }
     .legacy-chart-wrap.status {
       height: clamp(200px, 32vh, 280px);
     }
@@ -1074,6 +1078,8 @@ HTML = """
               <select id="csmsSnapshotSelect" data-report-id="exec"></select>
               <input type="text" id="csmsSnapshotNote" placeholder="Note for save (e.g. Monday exec)" />
               <button type="button" class="muted-btn" id="csmsSaveSnapshotBtn">Save snapshot</button>
+              <button type="button" class="muted-btn" id="csmsLoadSnapshotParamsBtn" title="Copy report variables from the selected saved report into the form">Load saved settings</button>
+              <button type="button" class="muted-btn" id="csmsRerunSnapshotBtn" title="Load saved settings, switch to Live, and run the executive report from Jira">Rerun with saved settings</button>
             </div>
             <p id="csmsSnapshotStatus" class="snapshot-status small"></p>
           </div>
@@ -1197,6 +1203,8 @@ HTML = """
               <select id="teamSnapshotSelect" data-report-id="ops"></select>
               <input type="text" id="teamSnapshotNote" placeholder="Note for save (e.g. AM ops)" />
               <button type="button" class="muted-btn" id="teamSaveSnapshotBtn">Save snapshot</button>
+              <button type="button" class="muted-btn" id="teamLoadSnapshotParamsBtn" title="Copy team report variables (and roster when saved) from the selected official report">Load saved settings</button>
+              <button type="button" class="muted-btn" id="teamRerunSnapshotBtn" title="Load saved settings, switch to Live, and refresh all members from Jira">Rerun with saved settings</button>
             </div>
             <p id="teamSnapshotStatus" class="snapshot-status small"></p>
             <details class="small" style="margin-top:10px;">
@@ -1229,6 +1237,24 @@ HTML = """
         <h3 style="margin:14px 0 8px;">Current Status Distribution</h3>
         <div class="legacy-chart-wrap status" title="Share of tickets from your legacy query by their current Jira status.">
           <canvas id="legacyStatusChart"></canvas>
+        </div>
+        <div id="legacyTicketLabelsSection" class="legacy-labels-block" title="Jira label counts for tickets in your Ticket trend query.">
+          <h2 style="margin:20px 0 6px;padding-top:16px;border-top:1px solid var(--border);">Ticket Labels &amp; label trends</h2>
+          <p id="legacyLabelsHint" class="team-labels-hint">Refresh the dashboard to see labels. Save snapshots to build label trends over time.</p>
+          <div class="team-labels-charts">
+            <div>
+              <h3>Current (top labels)</h3>
+              <div class="legacy-chart-wrap labels-bar">
+                <canvas id="legacyLabelsBarChart"></canvas>
+              </div>
+            </div>
+            <div>
+              <h3>Trend (line chart)</h3>
+              <div class="legacy-chart-wrap labels-trend" title="Top labels per saved official report; Live mode adds a Now column from the current refresh.">
+                <canvas id="legacyLabelsTrendChart"></canvas>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="two-col" style="margin-top:18px;">
@@ -1325,6 +1351,8 @@ HTML = """
               <select id="legacySnapshotSelect" data-report-id="legacy"></select>
               <input type="text" id="legacySnapshotNote" placeholder="Note for save" />
               <button type="button" class="muted-btn" id="legacySaveSnapshotBtn">Save snapshot</button>
+              <button type="button" class="muted-btn" id="legacyLoadSnapshotParamsBtn" title="Copy Ticket trend report variables from the selected saved report">Load saved settings</button>
+              <button type="button" class="muted-btn" id="legacyRerunSnapshotBtn" title="Load saved settings, switch to Live, and refresh the Ticket trend dashboard">Rerun with saved settings</button>
             </div>
             <p id="legacySnapshotStatus" class="snapshot-status small"></p>
           </div>
@@ -1390,6 +1418,8 @@ HTML = """
           <div class="notes-card">
             <h3>Ticket Trend SLA Cards</h3>
             <ul>
+              <li><strong>Created / Updated / Resolved:</strong> Line chart by day. <strong>Ticket Labels:</strong> Current bar + label trend line chart from saved reports.</li>
+              <li><strong>TTFR / TTR cards:</strong> Subline shows ▲/▼ % vs the <strong>prior saved official report</strong> (lower hours = green).</li>
               <li><strong>TTFR / TTR CSSD &amp; CSD:</strong> Configure status gates and aggregate (median, mean, or 90th percentile) under Report Settings, then <strong>Refresh Dashboard</strong>.</li>
               <li><strong>TTR:</strong> Jira Time to Resolution SLA (<code>customfield_10317</code>) or resolution date minus created; only tickets in your TTR status list.</li>
               <li><strong>TTFR CSD:</strong> Uses linked CSSD first-response time when a CSSD link exists.</li>
@@ -1403,7 +1433,8 @@ HTML = """
               <li>Choose an <strong>Official report</strong> snapshot or <strong>Live</strong>; Live still requires refresh to pull Jira.</li>
               <li>Use <strong>Save snapshot</strong> to store an official report in SQLite (refresh does not auto-save).</li>
               <li>Use Team member icons to switch per-member metrics.</li>
-              <li>Use Download CSV/Excel for the selected member, or Download Team CSV for all members.</li>
+              <li>Use Download CSV/Excel for the selected member. <strong>Download Team CSV</strong> uses session cache when complete; otherwise builds from Jira via board export (not available from archived snapshots without a live rerun).</li>
+              <li>Official reports: <strong>Load saved settings</strong> restores form variables (and team roster when saved); <strong>Rerun with saved settings</strong> runs a live refresh with those values.</li>
             </ul>
           </div>
           <div class="notes-card">
@@ -1423,7 +1454,8 @@ HTML = """
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 let csmsCharts = { daily: null, status: null, top: null };
-let legacyCharts = { status: null, daily: null };
+let legacyCharts = { status: null, daily: null, labelsBar: null, labelsTrend: null };
+let lastLegacyLabelDistribution = null;
 let teamCharts = { labelsBar: null, labelsTrend: null };
 let lastTeamLabelDistribution = null;
 let latestCsmsPayload = null;
@@ -1677,6 +1709,9 @@ function refreshChartsForTheme() {
   const legacySection = document.getElementById("legacyDashboardSection");
   if (latestLegacyPayload && latestLegacyPayload.charts && legacySection && !legacySection.hidden) {
     renderLegacyCharts(latestLegacyPayload.charts);
+    if (lastLegacyLabelDistribution) {
+      void refreshLegacyLabelCharts(lastLegacyLabelDistribution);
+    }
   }
   scheduleChartResize();
 }
@@ -1714,6 +1749,167 @@ function formToObject(form) {
   obj.include_workflow_events = form.include_workflow_events.checked;
   obj.verify_ssl = form.verify_ssl.checked;
   return obj;
+}
+
+const snapshotParamsById = {};
+
+const SNAPSHOT_PARAM_SKIP = new Set([
+  "assignee_username", "member_name", "member_usernames", "fetch_board_metrics",
+  "skip_pipeline", "skip_closed", "team_members",
+]);
+
+function objectToForm(form, params, skipKeys) {
+  if (!form || !params || typeof params !== "object") return 0;
+  const skip = skipKeys || SNAPSHOT_PARAM_SKIP;
+  let applied = 0;
+  for (const [key, value] of Object.entries(params)) {
+    if (skip.has(key)) continue;
+    const el = form.elements[key] || form.querySelector(`[name="${CSS.escape(key)}"]`);
+    if (!el) continue;
+    if (el.type === "checkbox") {
+      el.checked = Boolean(value);
+    } else if (el.tagName === "SELECT" || el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+      el.value = value == null ? "" : String(value);
+    } else {
+      continue;
+    }
+    applied += 1;
+  }
+  return applied;
+}
+
+function applyTeamMembersFromParams(params) {
+  const saved = params && params.team_members;
+  if (!Array.isArray(saved) || !saved.length) return false;
+  const merged = saved.map((m, i) => ({
+    id: (m.id || `snap-${i}-${(m.username || "").toLowerCase()}`).toString(),
+    name: (m.name || m.username || "").trim(),
+    username: (m.username || "").trim(),
+  })).filter((m) => m.username);
+  if (!merged.length) return false;
+  teamMembers = merged;
+  saveTeamMembersToStorage(teamMembers);
+  if (!activeTeamMemberId || !teamMembers.some((m) => m.id === activeTeamMemberId)) {
+    activeTeamMemberId = teamMembers[0].id;
+  }
+  renderTeamMemberIcons();
+  return true;
+}
+
+function snapshotSelectForReport(reportUiKey) {
+  const id = reportUiKey === "csms" ? "csmsSnapshotSelect"
+    : reportUiKey === "team" ? "teamSnapshotSelect" : "legacySnapshotSelect";
+  return document.getElementById(id);
+}
+
+function snapshotStatusElForReport(reportUiKey) {
+  const id = reportUiKey === "csms" ? "csmsSnapshotStatus"
+    : reportUiKey === "team" ? "teamSnapshotStatus" : "legacySnapshotStatus";
+  return document.getElementById(id);
+}
+
+async function getSelectedSnapshotParams(reportUiKey) {
+  const sel = snapshotSelectForReport(reportUiKey);
+  if (!sel || sel.value === "live") return null;
+  const snapId = parseInt(sel.value, 10);
+  if (!snapId) return null;
+  if (snapshotParamsById[snapId]) return snapshotParamsById[snapId];
+  const reportId = REPORT_ID_MAP[reportUiKey];
+  const display = await loadSnapshotDisplay(reportId, snapId);
+  return display && display.params ? display.params : null;
+}
+
+function ensureLiveModeForReport(reportUiKey) {
+  snapshotViewMode[reportUiKey] = "live";
+  const reportId = REPORT_ID_MAP[reportUiKey];
+  activeSnapshotId[reportId] = null;
+  const sel = snapshotSelectForReport(reportUiKey);
+  if (sel) sel.value = "live";
+  setArchiveBanner(reportUiKey, false, "");
+  if (reportUiKey === "team") {
+    latestBoardMetricsLoaded = false;
+    latestPipelineBacklogLoaded = false;
+    latestBoardMetrics = {};
+    teamPayloadByMemberId = {};
+    updateTeamRollupHeader();
+    updateTeamDataModeHint();
+  }
+}
+
+function hydrateFormFromSnapshotParams(reportUiKey, params) {
+  if (!params || typeof params !== "object") return { applied: 0, roster: false };
+  let applied = 0;
+  let roster = false;
+  if (reportUiKey === "csms") {
+    applied = objectToForm(document.getElementById("csmsForm"), params);
+  } else if (reportUiKey === "legacy") {
+    applied = objectToForm(document.getElementById("exportForm"), params);
+    updateLegacyReportPeriodLabel();
+  } else if (reportUiKey === "team") {
+    roster = applyTeamMembersFromParams(params);
+    applied = objectToForm(document.getElementById("teamPostureForm"), params);
+    updateTeamReportPeriodLabel();
+  }
+  return { applied, roster };
+}
+
+async function loadSavedReportSettings(reportUiKey) {
+  const statusEl = snapshotStatusElForReport(reportUiKey);
+  const params = await getSelectedSnapshotParams(reportUiKey);
+  if (!params) {
+    const msg = "Select a saved official report (not Live), then click Load saved settings.";
+    if (statusEl) statusEl.textContent = msg;
+    else alert(msg);
+    return false;
+  }
+  const { applied, roster } = hydrateFormFromSnapshotParams(reportUiKey, params);
+  const parts = [`Loaded ${applied} setting(s) from saved report.`];
+  if (reportUiKey === "team" && roster) parts.push(`Roster: ${teamMembers.length} member(s).`);
+  if (reportUiKey === "team" && !roster) {
+    parts.push("No roster in snapshot — using current team members in the browser.");
+  }
+  if (statusEl) statusEl.textContent = parts.join(" ");
+  return true;
+}
+
+async function rerunWithSavedReportSettings(reportUiKey) {
+  const statusEl = snapshotStatusElForReport(reportUiKey);
+  const loaded = await loadSavedReportSettings(reportUiKey);
+  if (!loaded) return;
+  ensureLiveModeForReport(reportUiKey);
+  if (statusEl) statusEl.textContent = (statusEl.textContent || "") + " Running live refresh…";
+  if (reportUiKey === "csms") {
+    await runCsmsExecutiveReport();
+  } else if (reportUiKey === "legacy") {
+    document.getElementById("legacyInsights").textContent = "Refreshing dashboard…";
+    await refreshLegacyDashboard(formToObject(document.getElementById("exportForm")));
+  } else {
+    await onTeamRefreshAllClick();
+  }
+}
+
+async function runCsmsExecutiveReport() {
+  const form = document.getElementById("csmsForm");
+  const payload = csmsFormToObject(form);
+  document.getElementById("csmsNarratives").textContent = "Running...";
+  const res = await fetch("/run-csms-exec-summary", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    document.getElementById("csmsNarratives").textContent = JSON.stringify(data, null, 2);
+    return;
+  }
+  latestCsmsPayload = data;
+  document.getElementById("csmsSubtitle").textContent = `Executive Incident Summary | ${data.periods.period2.label}`;
+  document.getElementById("csmsElapsed").textContent = data.elapsed_time_sentence || "Elapsed time sentence not available.";
+  renderCsmsKpis(data.kpis);
+  renderCsmsNarratives(data.narratives);
+  renderCsmsHealth(data.operational_health || {});
+  document.getElementById("csmsStuck").textContent = JSON.stringify(data.kpis.longest_open || {}, null, 2);
+  renderCsmsCharts(data.charts || {});
 }
 
 document.getElementById("previewBtn").addEventListener("click", async () => {
@@ -2343,6 +2539,159 @@ async function refreshTeamLabelCharts(labelDistribution) {
   scheduleChartResize();
 }
 
+const LEGACY_LABELS_BAR_TOP_N = 15;
+const LEGACY_LABELS_TREND_TOP_N = 10;
+
+function renderLegacyLabelsBarChart(labelDistribution) {
+  const el = document.getElementById("legacyLabelsBarChart");
+  if (!el) return;
+  lastLegacyLabelDistribution = labelDistribution || {};
+  const entries = Object.entries(lastLegacyLabelDistribution)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .slice(0, LEGACY_LABELS_BAR_TOP_N);
+  const theme = getChartTheme();
+  const wrap = el.closest(".legacy-chart-wrap");
+  if (wrap) {
+    const h = Math.min(480, Math.max(200, 80 + entries.length * 22));
+    wrap.style.height = `${h}px`;
+    wrap.style.maxHeight = "min(480px, 55vh)";
+  }
+  const ctx = el.getContext("2d");
+  destroyChart(legacyCharts.labelsBar);
+  if (!entries.length) {
+    legacyCharts.labelsBar = null;
+    const hintEl = document.getElementById("legacyLabelsHint");
+    if (hintEl && !Object.keys(lastLegacyLabelDistribution || {}).length) {
+      hintEl.textContent = snapshotViewMode.legacy === "live"
+        ? "Refresh the dashboard to see label counts. Save snapshots to build the trend bar chart over time."
+        : "No label data in this archived report.";
+    }
+    return;
+  }
+  const colors = chartSliceColors(entries.length);
+  legacyCharts.labelsBar = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: entries.map(([k]) => k),
+      datasets: [{
+        label: "Tickets",
+        data: entries.map(([, v]) => Number(v)),
+        backgroundColor: colors,
+        borderColor: theme.panel,
+        borderWidth: 1,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      indexAxis: "y",
+      plugins: chartThemePlugins(theme, { legend: { display: false } }),
+      scales: {
+        x: {
+          ticks: { color: theme.muted, precision: 0 },
+          grid: { color: theme.border },
+          border: { color: theme.border },
+          title: { display: true, text: "Ticket count", color: theme.muted },
+        },
+        y: {
+          ticks: { color: theme.text, autoSkip: false, font: { size: 10 } },
+          grid: { display: false },
+          border: { color: theme.border },
+        },
+      },
+    },
+  });
+  scheduleChartResize();
+}
+
+async function renderLegacyLabelsTrendChart() {
+  const el = document.getElementById("legacyLabelsTrendChart");
+  const hintEl = document.getElementById("legacyLabelsHint");
+  if (!el) return;
+  const theme = getChartTheme();
+  destroyChart(legacyCharts.labelsTrend);
+  legacyCharts.labelsTrend = null;
+
+  let url = `/snapshots/label-trends?report_id=legacy&top=${LEGACY_LABELS_TREND_TOP_N}`;
+  if (snapshotViewMode.legacy !== "live" && activeSnapshotId.legacy) {
+    url += `&to_snapshot_id=${encodeURIComponent(activeSnapshotId.legacy)}`;
+  }
+  let series = { time_labels: [], datasets: [], snapshot_count: 0 };
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (res.ok) series = data;
+  } catch (e) {
+    if (hintEl) hintEl.textContent = `Label trend load failed: ${e && e.message ? e.message : String(e)}`;
+    return;
+  }
+
+  const timeLabels = [...(series.time_labels || [])];
+  const datasets = (series.datasets || []).map((ds) => ({
+    label: ds.label,
+    data: [...(ds.data || [])],
+  }));
+
+  if (snapshotViewMode.legacy === "live" && lastLegacyLabelDistribution && Object.keys(lastLegacyLabelDistribution).length) {
+    timeLabels.push("Now");
+    for (const ds of datasets) {
+      ds.data.push(Number(lastLegacyLabelDistribution[ds.label] || 0));
+    }
+  }
+
+  if (!timeLabels.length) {
+    if (hintEl) {
+      hintEl.textContent = snapshotViewMode.legacy === "live"
+        ? "No saved Ticket trend snapshots with label data yet. Save snapshot after refresh to start tracking trends."
+        : "No label history in this archived report.";
+    }
+    return;
+  }
+
+  if (hintEl) {
+    const pts = series.snapshot_count || timeLabels.length;
+    hintEl.textContent = `Label trend line chart: top ${LEGACY_LABELS_TREND_TOP_N} labels across ${pts} saved report(s)${snapshotViewMode.legacy === "live" ? "; “Now” is the current refresh." : "."}`;
+  }
+
+  const ctx = el.getContext("2d");
+  legacyCharts.labelsTrend = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: timeLabels,
+      datasets: datasets.map((ds, i) => {
+        const color = CHART_SLICE_PALETTE[i % CHART_SLICE_PALETTE.length];
+        return {
+          label: ds.label,
+          data: ds.data,
+          borderColor: color,
+          backgroundColor: color + "33",
+          tension: 0.25,
+          fill: false,
+          pointRadius: 3,
+          pointHoverRadius: 5,
+        };
+      }),
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: chartThemePlugins(theme, {
+        legend: { position: "bottom", labels: { boxWidth: 10, padding: 8, font: { size: 10 } } },
+      }),
+      scales: chartThemeScales(theme),
+      layout: { padding: { left: 4, right: 8, top: 4, bottom: 4 } },
+    },
+  });
+  scheduleChartResize();
+}
+
+async function refreshLegacyLabelCharts(labelDistribution) {
+  renderLegacyLabelsBarChart(labelDistribution);
+  await renderLegacyLabelsTrendChart();
+  scheduleChartResize();
+}
+
 function toCsv(rows, headers) {
   const esc = (val) => {
     const s = String(val ?? "");
@@ -2602,6 +2951,7 @@ function deltaTone(metricKey, change) {
   const upBad = new Set([
     "backlog", "new_created", "pipeline_backlog_count", "queue_backlog_count",
     "assigned_open_count", "reopened_count", "sla_breach_count",
+    "ttfr_cssd_median_hours", "ttfr_csd_median_hours", "ttr_cssd_median_hours", "ttr_csd_median_hours",
   ]);
   const upGood = new Set([
     "resolved", "resolved_in_period_count", "resolved_owned_count",
@@ -2655,7 +3005,7 @@ async function loadSnapshotOptions(reportId, selectEl) {
   if (statusEl) {
     const cadence = data.suggested_cadence ? `Suggested cadence: ${data.suggested_cadence}. ` : "";
     statusEl.textContent = data.options?.length
-      ? `${cadence}${data.options.length} saved report(s).`
+      ? `${cadence}${data.options.length} saved report(s). Use Load saved settings or Rerun with saved settings on a selected report.`
       : `${cadence}No saved reports yet — run live and Save snapshot.`;
   }
   return data;
@@ -2665,6 +3015,9 @@ async function loadSnapshotDisplay(reportId, snapshotId) {
   const res = await fetch(`/snapshots/${snapshotId}/display`);
   const data = await res.json();
   if (!res.ok) return null;
+  if (data.params && typeof data.params === "object") {
+    snapshotParamsById[snapshotId] = data.params;
+  }
   return data;
 }
 
@@ -2682,8 +3035,87 @@ function hydrateLegacyFromDisplay(data) {
   renderLegacyKpis(data.kpis || {});
   renderLegacyCharts(data.charts || {});
   renderLegacyStatusSummary(data.charts || {});
+  void refreshLegacyLabelCharts((data.charts || {}).label_distribution || {});
   const lines = [...(data.warnings || []), ...(data.insights || [])];
   document.getElementById("legacyInsights").textContent = lines.join("\\n") || "Archived report.";
+}
+
+const LEGACY_SLA_METRIC_KEYS = [
+  "ttfr_cssd_median_hours",
+  "ttfr_csd_median_hours",
+  "ttr_cssd_median_hours",
+  "ttr_csd_median_hours",
+];
+
+async function applyDeltaToLegacySlaCard(card, snapshotId, liveKpis) {
+  const sub = card.querySelector(".metric-trend-sub");
+  const metricKey = card.getAttribute("data-metric-key");
+  if (!sub || !metricKey) return;
+  const valueEl = card.querySelector(".kpi-number");
+  if (valueEl && (valueEl.textContent.trim() === "--" || !valueEl.textContent.trim())) {
+    sub.textContent = "—";
+    sub.className = "metric-trend-sub";
+    sub.removeAttribute("title");
+    return;
+  }
+  let deltas = [];
+  let baselineSource = "prior saved report";
+  if (snapshotId) {
+    const res = await fetch(
+      `/snapshots/compare?report_id=legacy&snapshot_id=${encodeURIComponent(snapshotId)}`
+    );
+    const cmp = await res.json();
+    if (res.ok) {
+      deltas = (cmp.deltas || []).filter((d) => LEGACY_SLA_METRIC_KEYS.includes(d.metric_key));
+      baselineSource = (cmp.baseline && cmp.baseline.source === "manual") ? "manual baseline" : "prior saved report";
+    }
+  } else if (liveKpis) {
+    const res = await fetch("/snapshots/compare-live", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ report_id: "legacy", metrics: { kpis: liveKpis } }),
+    });
+    const cmp = await res.json();
+    if (res.ok) {
+      deltas = (cmp.deltas || []).filter((d) => LEGACY_SLA_METRIC_KEYS.includes(d.metric_key));
+      baselineSource = (cmp.baseline && cmp.baseline.source === "manual") ? "manual baseline" : "prior saved report";
+    }
+  }
+  const d = deltas.find((x) => x.metric_key === metricKey);
+  if (!d) {
+    sub.textContent = "—";
+    sub.className = "metric-trend-sub";
+    sub.title = "No prior saved report with this metric (save a snapshot after refresh).";
+    return;
+  }
+  sub.textContent = formatDeltaLine(d);
+  sub.className = `metric-trend-sub ${deltaTone(metricKey, d.change)}`;
+  const ch = Number(d.change);
+  const pct = d.pct_change != null ? `${d.pct_change}%` : "";
+  const hoursNote = ch > 0 ? "slower" : ch < 0 ? "faster" : "unchanged";
+  sub.title = `${hoursNote} vs ${baselineSource}: ${ch > 0 ? "+" : ""}${ch.toFixed(1)}h${pct ? ` (${pct})` : ""}`;
+}
+
+async function refreshLegacySlaTrends(snapshotId, mode) {
+  const cards = document.querySelectorAll("#legacyKpis .legacy-sla-kpi-card[data-metric-key]");
+  const liveKpis = mode === "live" && latestLegacyPayload ? latestLegacyPayload.kpis : null;
+  for (const card of cards) {
+    try {
+      if (mode === "archive" && snapshotId) {
+        await applyDeltaToLegacySlaCard(card, snapshotId, null);
+      } else if (mode === "live" && liveKpis) {
+        await applyDeltaToLegacySlaCard(card, null, liveKpis);
+      } else {
+        const sub = card.querySelector(".metric-trend-sub");
+        if (sub) {
+          sub.textContent = "—";
+          sub.className = "metric-trend-sub";
+        }
+      }
+    } catch (err) {
+      console.warn("Legacy SLA trend failed:", card.getAttribute("data-metric-key"), err);
+    }
+  }
 }
 
 function opsMemberPayloadFromArchive(memberView) {
@@ -2766,7 +3198,9 @@ async function applySnapshotSelection(reportUiKey) {
   const bannerText = `Official saved report — ${display.captured_at || ""}${display.note ? " — " + display.note : ""} — not live Jira`;
   setArchiveBanner(reportUiKey, true, bannerText);
   if (reportUiKey === "csms") hydrateCsmsFromDisplay(display);
-  if (reportUiKey === "legacy") hydrateLegacyFromDisplay(display);
+  if (reportUiKey === "legacy") {
+    hydrateLegacyFromDisplay(display);
+  }
   if (reportUiKey === "team") {
     hydrateOpsFromDisplay(display);
     await refreshOpsMetricTrends(snapId, "archive");
@@ -2908,10 +3342,24 @@ async function refreshOpsMetricTrends(snapshotId, mode) {
     liveBoard.memberMetrics = (latestTeamPosturePayload && latestTeamPosturePayload.metrics) || {};
   }
   const cards = document.querySelectorAll("#teamRollupGrid .team-metric-card[data-metric-key], #teamMetricsGrid .team-metric-card[data-metric-key]");
+  const noTrendKeys = new Set([
+    "worked_status_last_8h_count",
+    "worked_status_last_8h_assigned_others_count",
+    "resolved_last_8h_count",
+  ]);
   for (const card of cards) {
     const metricKey = card.getAttribute("data-metric-key");
     const scope = card.getAttribute("data-metric-scope");
     const uname = scope === "member" ? memberUsername : null;
+    if (metricKey && noTrendKeys.has(metricKey)) {
+      const sub = card.querySelector(".metric-trend-sub");
+      if (sub) {
+        sub.textContent = "";
+        sub.className = "metric-trend-sub";
+        sub.removeAttribute("title");
+      }
+      continue;
+    }
     if (scope === "member" && !uname) {
       const sub = card.querySelector(".metric-trend-sub");
       if (sub) { sub.textContent = "—"; sub.className = "metric-trend-sub"; }
@@ -2992,6 +3440,11 @@ async function saveReportSnapshot(reportUiKey) {
     params = teamFormToObject();
     delete params.assignee_username;
     delete params.member_name;
+    params.team_members = teamMembers.map((m) => ({
+      id: m.id,
+      name: m.name,
+      username: m.username,
+    }));
     const boardTrend = {};
     for (const k of ["pipeline_backlog_count","closed_cssd_csd_team_count","queue_backlog_count","in_progress_count","resolved_in_period_count","sla_breach_count","open_near_sla_breach_8h_count"]) {
       if (savePayload.board[k] != null) boardTrend[k] = savePayload.board[k];
@@ -3073,6 +3526,11 @@ function setActiveReport(report) {
   if (report === "legacy") {
     updateLegacyReportPeriodLabel();
     initReportSnapshots("legacy");
+    const labelDist = latestLegacyPayload?.charts?.label_distribution
+      || lastLegacyLabelDistribution
+      || {};
+    void refreshLegacyLabelCharts(labelDist);
+    void refreshLegacySlaTrendsForCurrentMode();
   }
   if (report === "csms") initReportSnapshots("csms");
 }
@@ -3208,22 +3666,34 @@ function renderLegacyKpis(kpis) {
     return `${agg} · ${n}`;
   };
   const cards = [
-    ["Issue Count", kpis.issue_count || 0, null],
-    ["Status Transitions", kpis.transition_count || 0, null],
-    ["Comment Volume", kpis.comment_count || 0, null],
-    ["Date Window Days", kpis.date_window_days || 0, null],
-    ["TTFR CSSD", formatLegacySlaHours(kpis.ttfr_cssd_median_hours), slaSub(kpis.ttfr_cssd_count, kpis.ttfr_cssd_aggregate)],
-    ["TTFR CSD", formatLegacySlaHours(kpis.ttfr_csd_median_hours), slaSub(kpis.ttfr_csd_count, kpis.ttfr_csd_aggregate)],
-    ["TTR CSSD", formatLegacySlaHours(kpis.ttr_cssd_median_hours), slaSub(kpis.ttr_cssd_count, kpis.ttr_cssd_aggregate)],
-    ["TTR CSD", formatLegacySlaHours(kpis.ttr_csd_median_hours), slaSub(kpis.ttr_csd_count, kpis.ttr_csd_aggregate)],
+    { title: "Issue Count", value: kpis.issue_count || 0, sub: null, metricKey: null },
+    { title: "Status Transitions", value: kpis.transition_count || 0, sub: null, metricKey: null },
+    { title: "Comment Volume", value: kpis.comment_count || 0, sub: null, metricKey: null },
+    { title: "Date Window Days", value: kpis.date_window_days || 0, sub: null, metricKey: null },
+    { title: "TTFR CSSD", value: formatLegacySlaHours(kpis.ttfr_cssd_median_hours), sub: slaSub(kpis.ttfr_cssd_count, kpis.ttfr_cssd_aggregate), metricKey: "ttfr_cssd_median_hours" },
+    { title: "TTFR CSD", value: formatLegacySlaHours(kpis.ttfr_csd_median_hours), sub: slaSub(kpis.ttfr_csd_count, kpis.ttfr_csd_aggregate), metricKey: "ttfr_csd_median_hours" },
+    { title: "TTR CSSD", value: formatLegacySlaHours(kpis.ttr_cssd_median_hours), sub: slaSub(kpis.ttr_cssd_count, kpis.ttr_cssd_aggregate), metricKey: "ttr_cssd_median_hours" },
+    { title: "TTR CSD", value: formatLegacySlaHours(kpis.ttr_csd_median_hours), sub: slaSub(kpis.ttr_csd_count, kpis.ttr_csd_aggregate), metricKey: "ttr_csd_median_hours" },
   ];
-  container.innerHTML = cards.map(([title, value, sub], i) => `
-    <div class="kpi-card" title="${LEGACY_KPI_TITLES[i] || ""}">
-      <div>${title}</div>
-      <div class="kpi-number">${value}</div>
-      ${sub ? `<div class="small" style="margin-top:4px;color:var(--muted);">${sub}</div>` : ""}
+  container.innerHTML = cards.map((card, i) => `
+    <div class="kpi-card${card.metricKey ? " legacy-sla-kpi-card" : ""}"${card.metricKey ? ` data-metric-key="${card.metricKey}"` : ""} title="${LEGACY_KPI_TITLES[i] || ""}">
+      <div class="kpi-label">${card.title}</div>
+      <div class="kpi-number">${card.value}</div>
+      ${card.sub ? `<div class="small" style="margin-top:4px;color:var(--muted);">${card.sub}</div>` : ""}
+      ${card.metricKey ? `<div class="metric-trend-sub">—</div>` : ""}
     </div>
   `).join("");
+  void refreshLegacySlaTrendsForCurrentMode();
+}
+
+function refreshLegacySlaTrendsForCurrentMode() {
+  if (snapshotViewMode.legacy === "live") {
+    return refreshLegacySlaTrends(null, "live");
+  }
+  if (activeSnapshotId.legacy) {
+    return refreshLegacySlaTrends(activeSnapshotId.legacy, "archive");
+  }
+  return Promise.resolve();
 }
 
 function renderLegacyCharts(charts) {
@@ -3249,19 +3719,25 @@ function renderLegacyCharts(charts) {
     },
   });
 
+  const dailyColors = [
+    "rgba(47, 122, 248, 0.9)",
+    "rgba(236, 72, 153, 0.9)",
+    "rgba(245, 158, 11, 0.9)",
+  ];
   legacyCharts.daily = new Chart(dailyCtx, {
-    type: "bar",
+    type: "line",
     data: {
       labels: (charts.created_daily || {}).dates || [],
       datasets: [
-        { label: "Created", data: (charts.created_daily || {}).created_counts || [] },
-        { label: "Updated", data: (charts.created_daily || {}).updated_counts || [] },
-        { label: "Resolved", data: (charts.created_daily || {}).resolved_counts || [] },
+        { label: "Created", data: (charts.created_daily || {}).created_counts || [], borderColor: dailyColors[0], backgroundColor: dailyColors[0] + "22", tension: 0.2, fill: false, pointRadius: 2 },
+        { label: "Updated", data: (charts.created_daily || {}).updated_counts || [], borderColor: dailyColors[1], backgroundColor: dailyColors[1] + "22", tension: 0.2, fill: false, pointRadius: 2 },
+        { label: "Resolved", data: (charts.created_daily || {}).resolved_counts || [], borderColor: dailyColors[2], backgroundColor: dailyColors[2] + "22", tension: 0.2, fill: false, pointRadius: 2 },
       ],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
       plugins: chartThemePlugins(theme),
       scales: chartThemeScales(theme),
     },
@@ -3301,6 +3777,8 @@ async function refreshLegacyDashboard(payload) {
   renderLegacyKpis(data.kpis || {});
   renderLegacyCharts(data.charts || {});
   renderLegacyStatusSummary(data.charts || {});
+  await refreshLegacyLabelCharts((data.charts || {}).label_distribution || {});
+  await refreshLegacySlaTrends(null, "live");
   const warningLines = data.warnings || [];
   const insightLines = data.insights || [];
   document.getElementById("legacyInsights").textContent = [...warningLines, ...insightLines].join("\\n");
@@ -3364,26 +3842,7 @@ function renderCsmsCharts(charts) {
 
 document.getElementById("csmsForm").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const payload = csmsFormToObject(e.target);
-  document.getElementById("csmsNarratives").textContent = "Running...";
-  const res = await fetch("/run-csms-exec-summary", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    document.getElementById("csmsNarratives").textContent = JSON.stringify(data, null, 2);
-    return;
-  }
-  latestCsmsPayload = data;
-  document.getElementById("csmsSubtitle").textContent = `Executive Incident Summary | ${data.periods.period2.label}`;
-  document.getElementById("csmsElapsed").textContent = data.elapsed_time_sentence || "Elapsed time sentence not available.";
-  renderCsmsKpis(data.kpis);
-  renderCsmsNarratives(data.narratives);
-  renderCsmsHealth(data.operational_health || {});
-  document.getElementById("csmsStuck").textContent = JSON.stringify(data.kpis.longest_open || {}, null, 2);
-  renderCsmsCharts(data.charts || {});
+  await runCsmsExecutiveReport();
 });
 
 function openCsmsExport(kind) {
@@ -3460,38 +3919,24 @@ function openTeamExport(kind) {
 
 document.getElementById("teamExportCsvBtn").addEventListener("click", () => openTeamExport("csv"));
 document.getElementById("teamExportExcelBtn").addEventListener("click", () => openTeamExport("excel"));
-document.getElementById("teamExportAllBtn").addEventListener("click", () => {
-  if (!teamMembers.length) {
-    document.getElementById("teamStatusSummary").textContent = "Add and select a member first.";
-    return;
-  }
-
+function mergeTeamExportRowsFromCache() {
   const exportPayloads = [];
   const missingMembers = [];
-
-  // Client-only: merge whatever is already in memory from Refresh / per-member loads. No network calls.
   for (const member of teamMembers) {
     const cached = teamPayloadByMemberId[member.id];
-    if (cached) {
+    if (cached && Array.isArray(cached.raw_rows) && cached.raw_rows.length) {
       exportPayloads.push(cached);
+    } else if (cached) {
+      missingMembers.push({ member, reason: "no rows" });
     } else {
-      missingMembers.push(member);
+      missingMembers.push({ member, reason: "not cached" });
     }
   }
-
-  if (!exportPayloads.length) {
-    document.getElementById("teamStatusSummary").textContent =
-      "No cached team data yet. Click Refresh All Member Metrics (or select each member once), then try Download Team CSV again.";
-    return;
-  }
-
-  // Merge member-level raw rows into one board export dataset.
   const allRows = [];
   for (const payload of exportPayloads) {
     const memberName = payload?.member?.name ?? "";
     const assigneeUsername = payload?.member?.assignee_username ?? "";
-    const rawRows = Array.isArray(payload.raw_rows) ? payload.raw_rows : [];
-    for (const raw of rawRows) {
+    for (const raw of payload.raw_rows) {
       allRows.push({
         "Member Name": memberName,
         "Assignee Username": assigneeUsername,
@@ -3499,13 +3944,10 @@ document.getElementById("teamExportAllBtn").addEventListener("click", () => {
       });
     }
   }
+  return { allRows, missingMembers };
+}
 
-  if (!allRows.length) {
-    document.getElementById("teamStatusSummary").textContent =
-      "Cached members have no dashboard ticket rows to export. Refresh metrics after changing filters, or confirm members have matching tickets.";
-    return;
-  }
-
+function downloadTeamCsvBlob(allRows) {
   const headers = Object.keys(allRows[0]);
   const csv = toCsv(allRows, headers);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -3518,14 +3960,91 @@ document.getElementById("teamExportAllBtn").addEventListener("click", () => {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
 
-  const statusParts = [
-    `Team CSV downloaded (${allRows.length} rows) from cached data only — no server request.`,
-    missingMembers.length
-      ? `Not in cache (skipped): ${missingMembers.map((m) => m.name || m.username).join(", ")}. Use Refresh All Member Metrics to cache them.`
-      : "All roster members were included.",
-  ];
-  document.getElementById("teamStatusSummary").textContent = statusParts.join(" ");
+async function downloadTeamBoardCsv() {
+  const statusEl = document.getElementById("teamStatusSummary");
+  if (!teamMembers.length) {
+    if (statusEl) statusEl.textContent = "Add team members first.";
+    return;
+  }
+
+  if (snapshotViewMode.team !== "live") {
+    const { allRows: archiveRows } = mergeTeamExportRowsFromCache();
+    if (!archiveRows.length) {
+      if (statusEl) {
+        statusEl.textContent =
+          "Archived reports do not include ticket rows. Use Load saved settings → Rerun with saved settings (or switch to Live and Refresh All), then Download Team CSV.";
+      }
+      return;
+    }
+  }
+
+  const { allRows: cachedRows, missingMembers } = mergeTeamExportRowsFromCache();
+  const allMembersCached = missingMembers.length === 0 && cachedRows.length > 0;
+  if (allMembersCached) {
+    downloadTeamCsvBlob(cachedRows);
+    if (statusEl) {
+      statusEl.textContent = `Team CSV downloaded (${cachedRows.length} rows) from session cache.`;
+    }
+    return;
+  }
+
+  if (statusEl) {
+    statusEl.textContent = "Building team export from Jira (one request per member — may take several minutes)…";
+  }
+  const payload = teamFormToObject();
+  delete payload.assignee_username;
+  delete payload.member_name;
+  payload.team_members = teamMembers.map((m) => ({
+    name: m.name,
+    username: m.username,
+  }));
+  try {
+    const res = await fetch("/run-team-posture-board-export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (statusEl) statusEl.textContent = data.error || data.details || "Team export failed.";
+      if (cachedRows.length) {
+        downloadTeamCsvBlob(cachedRows);
+        if (statusEl) {
+          statusEl.textContent += ` Partial cache download: ${cachedRows.length} row(s).`;
+        }
+      }
+      return;
+    }
+    if (data.exports && data.exports.csv) {
+      window.open(data.exports.csv, "_blank");
+      const n = Array.isArray(data.rows) ? data.rows.length : "";
+      if (statusEl) {
+        statusEl.textContent = n
+          ? `Team CSV ready from Jira (${n} rows).`
+          : "Team CSV download started.";
+      }
+      return;
+    }
+    if (Array.isArray(data.rows) && data.rows.length) {
+      downloadTeamCsvBlob(data.rows);
+      if (statusEl) statusEl.textContent = `Team CSV downloaded (${data.rows.length} rows) from Jira.`;
+      return;
+    }
+    if (statusEl) statusEl.textContent = "Export returned no rows for the current filters and roster.";
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    if (statusEl) statusEl.textContent = `Team export error: ${msg}`;
+    if (cachedRows.length) {
+      downloadTeamCsvBlob(cachedRows);
+      if (statusEl) statusEl.textContent += ` Downloaded partial cache (${cachedRows.length} rows).`;
+    }
+  }
+}
+
+document.getElementById("teamExportAllBtn").addEventListener("click", () => {
+  void downloadTeamBoardCsv();
 });
 
 document.getElementById("authCheckBtn").addEventListener("click", async () => {
@@ -3581,6 +4100,12 @@ renderLegacyKpis({ issue_count: 0, transition_count: 0, comment_count: 0, date_w
 document.getElementById("csmsSaveSnapshotBtn")?.addEventListener("click", () => saveReportSnapshot("csms"));
 document.getElementById("teamSaveSnapshotBtn")?.addEventListener("click", () => saveReportSnapshot("team"));
 document.getElementById("legacySaveSnapshotBtn")?.addEventListener("click", () => saveReportSnapshot("legacy"));
+document.getElementById("csmsLoadSnapshotParamsBtn")?.addEventListener("click", () => loadSavedReportSettings("csms"));
+document.getElementById("teamLoadSnapshotParamsBtn")?.addEventListener("click", () => loadSavedReportSettings("team"));
+document.getElementById("legacyLoadSnapshotParamsBtn")?.addEventListener("click", () => loadSavedReportSettings("legacy"));
+document.getElementById("csmsRerunSnapshotBtn")?.addEventListener("click", () => rerunWithSavedReportSettings("csms"));
+document.getElementById("teamRerunSnapshotBtn")?.addEventListener("click", () => rerunWithSavedReportSettings("team"));
+document.getElementById("legacyRerunSnapshotBtn")?.addEventListener("click", () => rerunWithSavedReportSettings("legacy"));
 document.getElementById("teamBaselineSaveBtn")?.addEventListener("click", async () => {
   const metric_key = (document.getElementById("teamBaselineMetric")?.value || "").trim();
   const value = document.getElementById("teamBaselineValue")?.value;
@@ -4843,6 +5368,7 @@ def build_legacy_dashboard_payload(params: Dict[str, Any]) -> Dict[str, Any]:
         total_transitions += int(row.get("Status Transition Count") or 0)
 
     status_counts = group_by_status(issues)
+    label_distribution = group_by_labels(issues)
     top_components = [{"name": k, "count": v} for k, v in Counter(group_by_component(issues)).most_common(5)]
     insights = [
         f"Workload distribution is led by {top_components[0]['name']} ({top_components[0]['count']} issues)." if top_components else "No component concentration detected.",
@@ -4884,6 +5410,7 @@ def build_legacy_dashboard_payload(params: Dict[str, Any]) -> Dict[str, Any]:
         "kpis": kpis,
         "charts": {
             "status_distribution": status_counts,
+            "label_distribution": label_distribution,
             "issue_type_distribution": dict(issue_type_counts),
             "created_daily": {
                 "dates": all_days,
@@ -6445,8 +6972,8 @@ def snapshots_trends():
 def snapshots_label_trends():
     report_id = (request.args.get("report_id") or "ops").strip()
     member_username = (request.args.get("member_username") or "").strip()
-    if not member_username:
-        return jsonify({"error": "member_username required"}), 400
+    if report_id != "legacy" and not member_username:
+        return jsonify({"error": "member_username required for ops label trends"}), 400
     top_n = int(request.args.get("top") or 10)
     limit = int(request.args.get("limit") or 20)
     to_snapshot_id = request.args.get("to_snapshot_id")
