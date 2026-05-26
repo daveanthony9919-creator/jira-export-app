@@ -1,5 +1,12 @@
 # CSMS Reporting Notes
 
+## 2026-05-21
+
+- **Operations Team — status rollups (team header):** After refresh, sums cached member metrics: **Team Queue Backlog**, **Team In Progress**, **Team Resolved (Report Period)**. Partial roster shows a note until **Refresh from Jira** completes for all members.
+- **Operations Team — per-member cards:** **Queue Backlog** (CSSD: Under QA Analysis; CSD: New), **In Progress** (CSSD: open, not New/Under QA Analysis; CSD: open, not New), **Worked Status (Last 8 Hours)** (owned tickets with your status changelog in last 8h), **Worked Status (Others, Last 8 Hours)** (not your ticket; you changed status in last 8h). Changelog required; Jira 500 fallback may zero worked-status counts.
+- **Resolved (Report Period):** Still computed per member (`resolutiondate` within Team Start/End among created-window issues) for **team rollup** and summary export — **no** per-member card on the grid.
+- **Download Team CSV:** Uses session cache (`teamPayloadByMemberId` / `raw_rows`) when every roster member is cached; otherwise `POST /run-team-posture-board-export`. On error, partial cache download when available. Archived snapshots do not store ticket rows — refresh live first.
+
 ## 2026-05-20
 
 - **Ticket trend SLA KPIs:** Four cards (TTFR/TTR × CSSD/CSD) on **Refresh Dashboard** (`POST /run-legacy-dashboard`).
