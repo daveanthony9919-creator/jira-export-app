@@ -172,6 +172,20 @@ def get_snapshot(snapshot_id: int) -> Optional[Dict[str, Any]]:
     return _row_to_snapshot(row) if row else None
 
 
+def delete_snapshot(snapshot_id: int, report_id: Optional[str] = None) -> bool:
+    """Delete one snapshot row. If report_id is set, the row must match that report."""
+    with db_connection() as conn:
+        if report_id:
+            cur = conn.execute(
+                "DELETE FROM snapshots WHERE id = ? AND report_id = ?",
+                (snapshot_id, report_id),
+            )
+        else:
+            cur = conn.execute("DELETE FROM snapshots WHERE id = ?", (snapshot_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
 def get_latest_snapshot(report_id: str) -> Optional[Dict[str, Any]]:
     with db_connection() as conn:
         row = conn.execute(

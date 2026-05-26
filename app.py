@@ -355,6 +355,13 @@ HTML = """
       transform: translateY(0);
       box-shadow: 0 3px 7px var(--btn-shadow);
     }
+    .muted-btn.danger-btn {
+      color: var(--danger);
+      border-color: rgba(220, 75, 85, 0.45);
+    }
+    .muted-btn.danger-btn:hover {
+      background: rgba(220, 75, 85, 0.08);
+    }
     .muted-btn {
       background: linear-gradient(180deg, var(--action-btn-bg-start), var(--action-btn-bg-end));
       color: var(--action-btn-text);
@@ -1080,6 +1087,7 @@ HTML = """
               <button type="button" class="muted-btn" id="csmsSaveSnapshotBtn">Save snapshot</button>
               <button type="button" class="muted-btn" id="csmsLoadSnapshotParamsBtn" title="Copy report variables from the selected saved report into the form">Load saved settings</button>
               <button type="button" class="muted-btn" id="csmsRerunSnapshotBtn" title="Load saved settings, switch to Live, and run the executive report from Jira">Rerun with saved settings</button>
+              <button type="button" class="muted-btn danger-btn" id="csmsDeleteSnapshotBtn" title="Permanently remove the selected saved report from SQLite">Delete snapshot</button>
             </div>
             <p id="csmsSnapshotStatus" class="snapshot-status small"></p>
           </div>
@@ -1205,6 +1213,7 @@ HTML = """
               <button type="button" class="muted-btn" id="teamSaveSnapshotBtn">Save snapshot</button>
               <button type="button" class="muted-btn" id="teamLoadSnapshotParamsBtn" title="Copy team report variables (and roster when saved) from the selected official report">Load saved settings</button>
               <button type="button" class="muted-btn" id="teamRerunSnapshotBtn" title="Load saved settings, switch to Live, and refresh all members from Jira">Rerun with saved settings</button>
+              <button type="button" class="muted-btn danger-btn" id="teamDeleteSnapshotBtn" title="Permanently remove the selected saved report from SQLite">Delete snapshot</button>
             </div>
             <p id="teamSnapshotStatus" class="snapshot-status small"></p>
             <details class="small" style="margin-top:10px;">
@@ -1353,6 +1362,7 @@ HTML = """
               <button type="button" class="muted-btn" id="legacySaveSnapshotBtn">Save snapshot</button>
               <button type="button" class="muted-btn" id="legacyLoadSnapshotParamsBtn" title="Copy Ticket trend report variables from the selected saved report">Load saved settings</button>
               <button type="button" class="muted-btn" id="legacyRerunSnapshotBtn" title="Load saved settings, switch to Live, and refresh the Ticket trend dashboard">Rerun with saved settings</button>
+              <button type="button" class="muted-btn danger-btn" id="legacyDeleteSnapshotBtn" title="Permanently remove the selected saved report from SQLite">Delete snapshot</button>
             </div>
             <p id="legacySnapshotStatus" class="snapshot-status small"></p>
           </div>
@@ -1434,7 +1444,7 @@ HTML = """
               <li>Use <strong>Save snapshot</strong> to store an official report in SQLite (refresh does not auto-save).</li>
               <li>Use Team member icons to switch per-member metrics.</li>
               <li>Use Download CSV/Excel for the selected member. <strong>Download Team CSV</strong> uses session cache when complete; otherwise builds from Jira via board export (not available from archived snapshots without a live rerun).</li>
-              <li>Official reports: <strong>Load saved settings</strong> restores form variables (and team roster when saved); <strong>Rerun with saved settings</strong> runs a live refresh with those values.</li>
+              <li>Official reports: <strong>Load saved settings</strong> restores form variables (and team roster when saved); <strong>Rerun with saved settings</strong> runs a live refresh with those values; <strong>Delete snapshot</strong> removes the selected saved report (confirmation required).</li>
             </ul>
           </div>
           <div class="notes-card">
@@ -1885,6 +1895,45 @@ async function rerunWithSavedReportSettings(reportUiKey) {
     await refreshLegacyDashboard(formToObject(document.getElementById("exportForm")));
   } else {
     await onTeamRefreshAllClick();
+  }
+}
+
+async function deleteSelectedSnapshot(reportUiKey) {
+  const statusEl = snapshotStatusElForReport(reportUiKey);
+  const sel = snapshotSelectForReport(reportUiKey);
+  if (!sel || sel.value === "live") {
+    const msg = "Select a saved official report to delete (not Live).";
+    if (statusEl) statusEl.textContent = msg;
+    else alert(msg);
+    return;
+  }
+  const snapId = parseInt(sel.value, 10);
+  if (!snapId) return;
+  const label = sel.options[sel.selectedIndex]?.textContent || `Report #${snapId}`;
+  if (!window.confirm(`Delete this saved report permanently?\n\n${label}\n\nThis cannot be undone.`)) {
+    return;
+  }
+  const reportId = REPORT_ID_MAP[reportUiKey];
+  const res = await fetch(
+    `/snapshots/${snapId}?report_id=${encodeURIComponent(reportId)}`,
+    { method: "DELETE" }
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = data.error || "Delete failed";
+    if (statusEl) statusEl.textContent = err;
+    else alert(err);
+    return;
+  }
+  delete snapshotParamsById[snapId];
+  if (activeSnapshotId[reportId] === snapId) {
+    activeSnapshotId[reportId] = null;
+  }
+  await loadSnapshotOptions(reportId, sel);
+  sel.value = "live";
+  ensureLiveModeForReport(reportUiKey);
+  if (statusEl) {
+    statusEl.textContent = `Deleted saved report #${snapId}. Switched to Live — refresh from Jira when ready.`;
   }
 }
 
@@ -3005,7 +3054,7 @@ async function loadSnapshotOptions(reportId, selectEl) {
   if (statusEl) {
     const cadence = data.suggested_cadence ? `Suggested cadence: ${data.suggested_cadence}. ` : "";
     statusEl.textContent = data.options?.length
-      ? `${cadence}${data.options.length} saved report(s). Use Load saved settings or Rerun with saved settings on a selected report.`
+      ? `${cadence}${data.options.length} saved report(s). Load/Rerun saved settings, or Delete snapshot to remove one.`
       : `${cadence}No saved reports yet — run live and Save snapshot.`;
   }
   return data;
@@ -4106,6 +4155,9 @@ document.getElementById("legacyLoadSnapshotParamsBtn")?.addEventListener("click"
 document.getElementById("csmsRerunSnapshotBtn")?.addEventListener("click", () => rerunWithSavedReportSettings("csms"));
 document.getElementById("teamRerunSnapshotBtn")?.addEventListener("click", () => rerunWithSavedReportSettings("team"));
 document.getElementById("legacyRerunSnapshotBtn")?.addEventListener("click", () => rerunWithSavedReportSettings("legacy"));
+document.getElementById("csmsDeleteSnapshotBtn")?.addEventListener("click", () => deleteSelectedSnapshot("csms"));
+document.getElementById("teamDeleteSnapshotBtn")?.addEventListener("click", () => deleteSelectedSnapshot("team"));
+document.getElementById("legacyDeleteSnapshotBtn")?.addEventListener("click", () => deleteSelectedSnapshot("legacy"));
 document.getElementById("teamBaselineSaveBtn")?.addEventListener("click", async () => {
   const metric_key = (document.getElementById("teamBaselineMetric")?.value || "").trim();
   const value = document.getElementById("teamBaselineValue")?.value;
@@ -6874,8 +6926,13 @@ def snapshots_list_options():
     return jsonify(snap_db.list_snapshot_options(report_id))
 
 
-@app.route("/snapshots/<int:snapshot_id>", methods=["GET"])
-def snapshots_get(snapshot_id: int):
+@app.route("/snapshots/<int:snapshot_id>", methods=["GET", "DELETE"])
+def snapshots_one(snapshot_id: int):
+    if request.method == "DELETE":
+        report_id = (request.args.get("report_id") or "").strip() or None
+        if snap_db.delete_snapshot(snapshot_id, report_id=report_id):
+            return jsonify({"deleted": True, "id": snapshot_id})
+        return jsonify({"error": "not found"}), 404
     snap = snap_db.get_snapshot(snapshot_id)
     if not snap:
         return jsonify({"error": "not found"}), 404

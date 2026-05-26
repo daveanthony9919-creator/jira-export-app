@@ -40,6 +40,7 @@ Default dev URL: `http://127.0.0.1:5001`
 | `POST` | `/run-team-board-metrics` | **Team Closed** board metric (pass `skip_pipeline: true` for closed-only; omit for both). |
 | `GET` | `/snapshots/list-options?report_id=` | Dropdown options for official saved reports (`exec`, `ops`, `legacy`). |
 | `GET` | `/snapshots/<id>` | Full snapshot record including saved `params`. |
+| `DELETE` | `/snapshots/<id>?report_id=` | Remove one saved snapshot (`report_id` optional guard). |
 | `GET` | `/snapshots/<id>/display` | Hydrate dashboard from a saved snapshot (no Jira); includes `params` for form restore. |
 | `POST` | `/snapshots` | Manually save an official report snapshot. |
 | `GET` | `/snapshots/compare?report_id=&snapshot_id=` | Between-report metric deltas vs previous snapshot or manual baseline. |
