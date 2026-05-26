@@ -273,6 +273,9 @@ def _get_metric_value(
     trend = metrics.get("trend") or {}
     if metric_key in trend:
         return _coerce_metric_float(trend[metric_key])
+    kpis = (metrics.get("view") or {}).get("kpis") or {}
+    if metric_key in kpis:
+        return _coerce_metric_float(kpis[metric_key])
     return None
 
 
@@ -456,6 +459,9 @@ def _live_metric_value(
     board = live_metrics.get("board") or live_metrics
     if metric_key in board:
         return _coerce_metric_float(board[metric_key])
+    kpis = live_metrics.get("kpis")
+    if isinstance(kpis, dict) and metric_key in kpis:
+        return _coerce_metric_float(kpis[metric_key])
     return None
 
 
@@ -580,16 +586,30 @@ def _member_label_distribution_from_snapshot(
     return {}
 
 
+def _legacy_label_distribution_from_snapshot(metrics: Dict[str, Any]) -> Dict[str, Any]:
+    charts = (metrics.get("view") or {}).get("charts") or {}
+    dist = charts.get("label_distribution") or {}
+    return dist if isinstance(dist, dict) else {}
+
+
+def _label_distribution_from_snapshot(
+    report_id: str, metrics: Dict[str, Any], member_username: str
+) -> Dict[str, Any]:
+    if report_id == "legacy":
+        return _legacy_label_distribution_from_snapshot(metrics)
+    return _member_label_distribution_from_snapshot(metrics, member_username)
+
+
 def build_label_trend_series(
     report_id: str,
-    member_username: str,
+    member_username: str = "",
     top_n: int = 10,
     limit: int = 20,
     to_snapshot_id: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Time series of top Jira label counts for one member across saved snapshots."""
+    """Time series of top Jira label counts across saved snapshots (ops: per member; legacy: whole report)."""
     target = (member_username or "").strip().lower()
-    if not target:
+    if report_id != "legacy" and not target:
         return {
             "report_id": report_id,
             "member_username": member_username,
@@ -613,7 +633,7 @@ def build_label_trend_series(
     rows: List[Tuple[str, str, Dict[str, Any]]] = []
     label_totals: Dict[str, int] = {}
     for s in snaps:
-        dist = _member_label_distribution_from_snapshot(s["metrics"], target)
+        dist = _label_distribution_from_snapshot(report_id, s["metrics"], target)
         if not dist:
             continue
         try:
@@ -726,12 +746,15 @@ def snapshot_to_display(snapshot_id: int) -> Optional[Dict[str, Any]]:
     metrics = snap["metrics"]
     view = metrics.get("view") or {}
 
+    saved_params = snap.get("params") or {}
+
     if report_id == "exec":
         return {
             "report_id": "exec",
             "snapshot_id": snap["id"],
             "captured_at": snap["captured_at"],
             "note": snap["note"],
+            "params": saved_params,
             "periods": view.get("periods"),
             "kpis": view.get("kpis"),
             "charts": view.get("charts") or {},
@@ -745,6 +768,7 @@ def snapshot_to_display(snapshot_id: int) -> Optional[Dict[str, Any]]:
             "snapshot_id": snap["id"],
             "captured_at": snap["captured_at"],
             "note": snap["note"],
+            "params": saved_params,
             "kpis": view.get("kpis") or {},
             "charts": view.get("charts") or {},
             "insights": view.get("insights") or [],
@@ -756,6 +780,7 @@ def snapshot_to_display(snapshot_id: int) -> Optional[Dict[str, Any]]:
             "snapshot_id": snap["id"],
             "captured_at": snap["captured_at"],
             "note": snap["note"],
+            "params": saved_params,
             "board": view.get("board") or {},
             "members": view.get("members") or [],
         }
