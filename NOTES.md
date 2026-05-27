@@ -1,5 +1,11 @@
 # CSMS Reporting Notes
 
+## 2026-05-25
+
+- **Official reports — Load saved settings:** Choosing a snapshot in the dropdown shows archived numbers only; **Load saved settings** (or **Rerun with saved settings**) is required to copy `params` into the form. `GET /snapshots/<id>/display` includes `params` for exec, ops, and legacy.
+- **Official reports — Delete snapshot:** **Delete snapshot** on Executive, Operations Team, and Ticket trend tabs; confirms then `DELETE /snapshots/<id>?report_id=`. Switches to Live after delete. Manual comparison baselines are unchanged.
+- **Operations Team — 8-hour cards:** **Worked Status (Last 8 Hours)**, **Worked Status (Others, Last 8 Hours)**, and **Resolved (Last 8 Hours)** do not show ▲/▼ trend markers (still compared internally for other uses where applicable).
+
 ## 2026-05-21
 
 - **Operations Team — status rollups (team header):** After refresh, sums cached member metrics: **Team Queue Backlog**, **Team In Progress**, **Team Resolved (Report Period)**. Partial roster shows a note until **Refresh from Jira** completes for all members.
