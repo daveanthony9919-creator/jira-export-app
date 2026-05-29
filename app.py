@@ -1180,8 +1180,12 @@ HTML = """
             <div class="field wide"><label>Jira Search Endpoint</label><input name="base_url" value="https://jira.mdthink.maryland.gov/rest/api/2/search" /></div>
             <div class="field wide"><label>Projects (comma separated)</label><input name="projects" value="CSSD,CSD,CDF" /></div>
             <div class="field"><label>Start Date/Time</label><input type="datetime-local" name="start_dt" /></div>
-            <div class="field"><label>End Date/Time</label><input type="datetime-local" name="end_dt" /></div>
+            <div class="field"><label>End Date/Time</label><input type="datetime-local" name="end_dt" title="Team issue pool uses created &lt;= this time (inclusive through the selected minute)." /></div>
             <div class="field"><label>Issue Types</label><input name="issue_types" placeholder="Bug, Task" /></div>
+            <div class="field full">
+              <button type="button" class="muted-btn" id="teamPreviewJqlBtn">Preview team JQL</button>
+              <p id="teamJqlPreview" class="small snapshot-status" style="margin-top:8px;word-break:break-word;"></p>
+            </div>
             <div class="field"><label>CSD Assigned Developer Field Key</label><input name="csd_assigned_dev_field" value="customfield_14700" placeholder="customfield_12345" /></div>
             <div class="field"><label>Page Size</label><input type="number" name="page_size" value="50" min="1" max="100" /></div>
             <div class="field"><label>Max Issues (0 = all)</label><input type="number" name="max_issues" value="0" min="0" /></div>
@@ -1485,6 +1489,7 @@ let latestPipelineBacklogLoaded = false;
 let boardMetricsRefreshInFlight = null;
 let teamBulkRefreshInFlight = null;
 let teamPoolCacheId = null;
+let lastTeamBroadJql = "";
 let teamJiraQueue = Promise.resolve();
 
 /** Run team Jira API calls one at a time so Flask is not overloaded. */
@@ -2158,6 +2163,8 @@ function teamFormToObject() {
   const fd = new FormData(form);
   for (const [key, value] of fd.entries()) obj[key] = value;
   obj.verify_ssl = form.verify_ssl.checked;
+  obj.start_dt = form.querySelector('input[name="start_dt"]')?.value || "";
+  obj.end_dt = form.querySelector('input[name="end_dt"]')?.value || "";
   const member = activeTeamMember();
   obj.assignee_username = member ? member.username : "";
   obj.member_name = member ? member.name : "";
@@ -2839,6 +2846,11 @@ function teamRefreshRequestBody() {
 
 function applyTeamRefreshResponse(data) {
   if (data.pool_cache_id) teamPoolCacheId = data.pool_cache_id;
+  if (data.broad_jql) {
+    lastTeamBroadJql = data.broad_jql;
+    const jqlEl = document.getElementById("teamJqlPreview");
+    if (jqlEl) jqlEl.textContent = `Last refresh JQL: ${data.broad_jql}`;
+  }
   if (data.board_metrics) {
     latestBoardMetrics = { ...latestBoardMetrics, ...data.board_metrics };
     if (data.board_metrics.pipeline_backlog_count != null) latestPipelineBacklogLoaded = true;
@@ -2961,7 +2973,7 @@ function updateTeamReportPeriodLabel() {
   const a = formatReportDatetimeLocal(start);
   const b = formatReportDatetimeLocal(end);
   if (start && end) {
-    el.textContent = `Report period (created): ${a} → ${b}`;
+    el.textContent = "Report period (created): " + a + " -> " + b + " (Jira pool: created >= start AND created <= end)";
   } else if (start) {
     el.textContent = `Report period (created): from ${a}`;
   } else {
@@ -3939,6 +3951,34 @@ document.getElementById("teamRefreshActiveBtn")?.addEventListener("click", () =>
   void refreshTeamPosture();
 });
 
+document.getElementById("teamPreviewJqlBtn")?.addEventListener("click", async () => {
+  const payload = teamFormToObject();
+  delete payload.assignee_username;
+  delete payload.member_name;
+  const el = document.getElementById("teamJqlPreview");
+  if (el) el.textContent = "Building JQL preview...";
+  const res = await fetch("/preview-team-jql", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    if (el) el.textContent = data.error || "Preview failed.";
+    return;
+  }
+  const endNote = data.end_dt
+    ? "End in JQL: created <= \"" + (data.end_dt_jql || data.end_dt) + "\""
+    : "No end date - pool is not capped by created upper bound.";
+  if (el) {
+    el.textContent = [
+      "Broad pool: " + (data.broad_jql || ""),
+      "Team closed: " + (data.closed_team_jql || ""),
+      endNote,
+    ].join("\\n");
+  }
+});
+
 document.getElementById("teamAddMemberBtn").addEventListener("click", () => {
   const nameInput = document.getElementById("teamMemberNameInput");
   const usernameInput = document.getElementById("teamMemberUsernameInput");
@@ -4265,8 +4305,21 @@ def normalize_dt_local(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
     value = value.strip()
+    if not value:
+        return None
     # Converts "2026-04-21T10:30" to Jira-friendly quoted value.
     return value.replace("T", " ")
+
+
+def normalize_dt_jql_end(value: Optional[str]) -> Optional[str]:
+    """Upper bound for JQL <= clauses: include the full selected minute (datetime-local has no seconds)."""
+    normalized = normalize_dt_local(value)
+    if not normalized:
+        return None
+    # "YYYY-MM-DD HH:MM" from datetime-local → include through :59 of that minute.
+    if len(normalized) == 16 and normalized[10] == " ":
+        return f"{normalized}:59"
+    return normalized
 
 
 def parse_time_value(value: Optional[str]) -> Optional[time]:
@@ -5554,6 +5607,7 @@ def fetch_team_issue_pool(params: Dict[str, Any]) -> Dict[str, Any]:
     max_issues = int(params.get("max_issues") or 0)
     verify_ssl = bool(params.get("verify_ssl", True))
     broad_jql = build_team_posture_broad_jql(params)
+    print(f"[team-issue-pool] JQL: {broad_jql}", flush=True)
     warnings: List[str] = []
     changelog_included = True
     try:
@@ -5598,7 +5652,7 @@ def build_team_posture_jql(params: Dict[str, Any], assignee_username: str, inclu
         if clause:
             clauses.append(clause)
     start_dt = normalize_dt_local(params.get("start_dt"))
-    end_dt = normalize_dt_local(params.get("end_dt"))
+    end_dt = normalize_dt_jql_end(params.get("end_dt"))
     if start_dt:
         clauses.append(f'created >= "{start_dt}"')
     if end_dt:
@@ -5624,7 +5678,7 @@ def build_team_closed_board_jql(params: Dict[str, Any]) -> str:
         'status = Closed',
     ]
     start_dt = normalize_dt_local(params.get("start_dt"))
-    end_dt = normalize_dt_local(params.get("end_dt"))
+    end_dt = normalize_dt_jql_end(params.get("end_dt"))
     if start_dt:
         clauses.append(f'updated >= "{start_dt}"')
     if end_dt:
@@ -6276,6 +6330,18 @@ def parse_team_form_datetime(value: Optional[str]) -> Optional[datetime]:
     return dt
 
 
+def parse_team_form_datetime_end(value: Optional[str]) -> Optional[datetime]:
+    """Parse end datetime from form; upper bound is inclusive through the selected minute."""
+    dt = parse_team_form_datetime(value)
+    if dt is None:
+        return None
+    text = str(value or "").strip()
+    # datetime-local values are YYYY-MM-DDTHH:MM with no seconds.
+    if text and len(text) >= 16 and text[10] == "T" and len(text) <= 16:
+        return dt.replace(second=59, microsecond=999999)
+    return dt
+
+
 def count_owned_resolved_in_report_window(
     owned_issues: List[Dict[str, Any]],
     keywords: Tuple[str, ...],
@@ -6588,7 +6654,7 @@ def build_team_member_posture_from_pool(
         owned_issues, TEAM_POSTURE_RESOLVED_STATUS_KEYWORDS, hours=8.0
     )
     report_start = parse_team_form_datetime(params.get("start_dt"))
-    report_end = parse_team_form_datetime(params.get("end_dt"))
+    report_end = parse_team_form_datetime_end(params.get("end_dt"))
     queue_backlog_count = count_owned_queue_backlog(owned_issues, project_rules)
     in_progress_count = count_owned_in_progress(owned_issues, project_rules)
     worked_status_last_8h_count = count_owned_status_changes_in_last_hours(
@@ -6843,7 +6909,7 @@ def get_auth_diagnostics(params: Dict[str, Any]) -> Dict[str, Any]:
 @app.route("/")
 def index():
     page = HTML.replace("__DEFAULT_TEAM_ROSTER_JSON__", json.dumps(TEAM_DEFAULT_MEMBERS))
-    return render_template_string(page)
+    return Response(page, mimetype="text/html; charset=utf-8")
 
 
 @app.route("/preview-jql", methods=["POST"])
@@ -6851,6 +6917,24 @@ def preview_jql():
     try:
         params = request.get_json(force=True)
         return jsonify({"jql": build_jql(params)})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/preview-team-jql", methods=["POST"])
+def preview_team_jql():
+    try:
+        params = request.get_json(force=True)
+        end_raw = (params.get("end_dt") or "").strip()
+        return jsonify(
+            {
+                "broad_jql": build_team_posture_broad_jql(params),
+                "closed_team_jql": build_team_closed_board_jql(params),
+                "start_dt": (params.get("start_dt") or "").strip(),
+                "end_dt": end_raw,
+                "end_dt_jql": normalize_dt_jql_end(end_raw) or "",
+            }
+        )
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
 
