@@ -1,5 +1,10 @@
 # CSMS Reporting Notes
 
+## 2026-05-27
+
+- **Operations Team performance:** `POST /run-team-posture-refresh` fetches **one** broad team JQL (with changelog when Jira allows), computes all member dashboard metrics in memory, and caches the issue pool server-side (`pool_cache_id`). Refresh no longer downloads ticket rows or writes per-member export files.
+- **Export on demand:** `POST /run-team-posture-board-export` returns slim CSV columns only: Member Name, Dashboard Bucket, Issue Key, Summary. Reuses `pool_cache_id` from the last refresh when possible.
+
 ## 2026-05-25
 
 - **Official reports — Load saved settings:** Choosing a snapshot in the dropdown shows archived numbers only; **Load saved settings** (or **Rerun with saved settings**) is required to copy `params` into the form. `GET /snapshots/<id>/display` includes `params` for exec, ops, and legacy.

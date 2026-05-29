@@ -27,7 +27,16 @@ snap_db.init_db()
 STATUS_TRANSITION_SLOTS = 30
 CSMS_EXPORT_CACHE: Dict[str, Dict[str, str]] = {}
 TEAM_EXPORT_CACHE: Dict[str, Dict[str, str]] = {}
+TEAM_ISSUE_POOL_CACHE: Dict[str, Dict[str, Any]] = {}
+TEAM_ISSUE_POOL_CACHE_MAX = 3
 RESOLUTION_SLA_FIELD_CACHE: Dict[str, str] = {}
+
+TEAM_EXPORT_SLIM_COLUMNS = (
+    "Member Name",
+    "Dashboard Bucket",
+    "Issue Key",
+    "Summary",
+)
 
 # Status substrings rolled up as "resolved" style outcomes for Team Posture resolved KPIs.
 TEAM_POSTURE_RESOLVED_STATUS_KEYWORDS: Tuple[str, ...] = (
@@ -1443,7 +1452,7 @@ HTML = """
               <li>Choose an <strong>Official report</strong> snapshot or <strong>Live</strong>; Live still requires refresh to pull Jira.</li>
               <li>Use <strong>Save snapshot</strong> to store an official report in SQLite (refresh does not auto-save).</li>
               <li>Use Team member icons to switch per-member metrics.</li>
-              <li>Use Download CSV/Excel for the selected member. <strong>Download Team CSV</strong> uses session cache when complete; otherwise builds from Jira via board export (not available from archived snapshots without a live rerun).</li>
+              <li><strong>Refresh from Jira</strong> loads dashboard metrics only (one team-wide Jira fetch). <strong>Download CSV</strong> / <strong>Download Team CSV</strong> build slim ticket rows on demand (Member Name, Dashboard Bucket, Issue Key, Summary) from the cached issue pool after refresh.</li>
               <li>Official reports: <strong>Load saved settings</strong> restores form variables (and team roster when saved); <strong>Rerun with saved settings</strong> runs a live refresh with those values; <strong>Delete snapshot</strong> removes the selected saved report (confirmation required).</li>
             </ul>
           </div>
@@ -1475,6 +1484,7 @@ let latestBoardMetricsLoaded = false;
 let latestPipelineBacklogLoaded = false;
 let boardMetricsRefreshInFlight = null;
 let teamBulkRefreshInFlight = null;
+let teamPoolCacheId = null;
 let teamJiraQueue = Promise.resolve();
 
 /** Run team Jira API calls one at a time so Flask is not overloaded. */
@@ -2376,7 +2386,7 @@ async function fetchTeamPosture(payload) {
 function formatTeamPostureStatus(payload) {
   const meta = payload.query_meta || {};
   const broadN = Number(meta.broad_issue_count ?? (payload.raw_rows || []).length);
-  const assigneeN = Number(meta.assignee_issue_count ?? 0);
+  const assigneeN = Number(meta.owned_issue_count ?? meta.assignee_issue_count ?? 0);
   if (broadN === 0) {
     return [
       `Jira returned 0 tickets in the broad metrics query for ${(payload.member && payload.member.name) || "this member"}.`,
@@ -2395,7 +2405,7 @@ function formatTeamPostureStatus(payload) {
   const lines = Object.entries(status)
     .sort((a, b) => Number(b[1]) - Number(a[1]))
     .map(([k, v]) => `${k}: ${v}`);
-  lines.push("", `${broadN} ticket(s) in broad scope (${assigneeN} on assignee filter).`);
+  lines.push("", `${broadN} ticket(s) in team pool (${assigneeN} owned by this member).`);
   return lines.join("\\n");
 }
 
@@ -2427,7 +2437,13 @@ function renderTeamPostureMetrics(payload) {
   document.getElementById("teamStatusSummary").textContent = formatTeamPostureStatus(payload);
   document.getElementById("teamOldestDetail").textContent = JSON.stringify(oldest || {}, null, 2);
   refreshTeamLabelCharts(payload.label_distribution || {});
-  renderTeamCsvPreview(payload.raw_rows || []);
+  const previewRows = payload.raw_rows || [];
+  if (previewRows.length) {
+    renderTeamCsvPreview(previewRows);
+  } else {
+    document.getElementById("teamCsvPreview").textContent =
+      "Dashboard refresh does not load ticket rows. Use Download CSV or Download Team CSV for Member Name, Dashboard Bucket, Issue Key, and Summary.";
+  }
   updateTeamRollupHeader();
   updateTeamDataModeHint();
   if (!teamBulkRefreshInFlight && !payload._fromArchive) {
@@ -2784,10 +2800,17 @@ async function refreshTeamPosture() {
     }
     const payload = teamFormToObject();
     payload.fetch_board_metrics = false;
+    payload.include_raw_rows = false;
+    if (teamPoolCacheId) payload.pool_cache_id = teamPoolCacheId;
     const statusEl = document.getElementById("teamStatusSummary");
-    if (statusEl) statusEl.textContent = `Refreshing ${member.name} from Jira…`;
+    if (statusEl) {
+      statusEl.textContent = teamPoolCacheId
+        ? `Refreshing ${member.name} from cached team pool…`
+        : `Refreshing ${member.name} (loading team pool from Jira)…`;
+    }
     try {
       const data = await fetchTeamPosture(payload);
+      if (data.pool_cache_id) teamPoolCacheId = data.pool_cache_id;
       teamPayloadByMemberId[member.id] = data;
       if (!latestBoardMetricsLoaded) {
         await ensureTeamBoardMetrics();
@@ -2802,6 +2825,41 @@ async function refreshTeamPosture() {
   });
 }
 
+function teamRefreshRequestBody() {
+  const base = teamFormToObject();
+  delete base.assignee_username;
+  delete base.member_name;
+  base.team_members = teamMembers.map((m) => ({
+    id: m.id,
+    name: m.name,
+    username: m.username,
+  }));
+  return base;
+}
+
+function applyTeamRefreshResponse(data) {
+  if (data.pool_cache_id) teamPoolCacheId = data.pool_cache_id;
+  if (data.board_metrics) {
+    latestBoardMetrics = { ...latestBoardMetrics, ...data.board_metrics };
+    if (data.board_metrics.pipeline_backlog_count != null) latestPipelineBacklogLoaded = true;
+    if (data.board_metrics.closed_cssd_csd_team_count != null) latestBoardMetricsLoaded = true;
+  }
+  const byUsername = {};
+  for (const payload of data.members || []) {
+    const uname = (payload.member && payload.member.assignee_username || "").toLowerCase();
+    if (uname) byUsername[uname] = payload;
+  }
+  let successCount = 0;
+  for (const member of teamMembers) {
+    const payload = byUsername[(member.username || "").toLowerCase()];
+    if (payload) {
+      teamPayloadByMemberId[member.id] = payload;
+      successCount += 1;
+    }
+  }
+  return successCount;
+}
+
 async function refreshAllTeamMembers() {
   if (teamBulkRefreshInFlight) return teamBulkRefreshInFlight;
   teamBulkRefreshInFlight = (async () => {
@@ -2810,92 +2868,55 @@ async function refreshAllTeamMembers() {
     const refreshBtn = document.getElementById("teamRefreshBtn");
     const refreshBtnMain = document.getElementById("teamRefreshBtnMain");
     const refreshActiveBtn = document.getElementById("teamRefreshActiveBtn");
-    try {
-    ensureLiveModeForTeamRefresh();
-    updateTeamReportPeriodLabel();
-    if (!teamMembers.length) {
-      if (statusEl) statusEl.textContent = "Add and select a member first.";
-      if (previewEl) previewEl.textContent = "Add and select a member first.";
-      return;
-    }
-    if (refreshBtn) refreshBtn.disabled = true;
-    if (refreshBtnMain) refreshBtnMain.disabled = true;
-    if (refreshActiveBtn) refreshActiveBtn.disabled = true;
-    if (statusEl) statusEl.textContent = `Refreshing ${teamMembers.length} member(s) from Jira…`;
-    latestPipelineBacklogLoaded = false;
-    latestBoardMetricsLoaded = false;
-    latestBoardMetrics = {};
-    updateTeamRollupHeader();
-    const base = teamFormToObject();
-    delete base.assignee_username;
-    delete base.member_name;
-    base.member_usernames = teamMembers.map((m) => m.username).filter(Boolean);
-    const pipelinePromise = enqueueTeamJira(() => refreshPipelineBacklogCount());
-    let successCount = 0;
     let lastError = "";
-      for (let i = 0; i < teamMembers.length; i++) {
-        const member = teamMembers[i];
-        if (statusEl) {
-          statusEl.textContent = `Refreshing ${i + 1}/${teamMembers.length}: ${member.name}…`;
-        }
-        try {
-          await enqueueTeamJira(async () => {
-            const payload = {
-              ...base,
-              assignee_username: member.username,
-              member_name: member.name,
-              fetch_board_metrics: false,
-            };
-            const data = await fetchTeamPosture(payload);
-            teamPayloadByMemberId[member.id] = data;
-            successCount += 1;
-          });
-        } catch (err) {
-          const msg = err && err.message ? err.message : String(err);
-          lastError = msg;
-          if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("CONNECTION")) {
-            lastError = "Connection lost — server may have restarted. Wait a few seconds, restart app.py if needed, then retry.";
-            throw err;
-          }
-        }
+    try {
+      ensureLiveModeForTeamRefresh();
+      updateTeamReportPeriodLabel();
+      if (!teamMembers.length) {
+        if (statusEl) statusEl.textContent = "Add and select a member first.";
+        if (previewEl) previewEl.textContent = "Add and select a member first.";
+        return;
       }
-      try {
-        await pipelinePromise;
-      } catch (err) {
-        const msg = err && err.message ? err.message : String(err);
-        if (!lastError) lastError = msg;
-        console.warn("Pipeline backlog during bulk refresh:", err);
+      if (refreshBtn) refreshBtn.disabled = true;
+      if (refreshBtnMain) refreshBtnMain.disabled = true;
+      if (refreshActiveBtn) refreshActiveBtn.disabled = true;
+      if (statusEl) {
+        statusEl.textContent = `Refreshing team (one Jira fetch for all ${teamMembers.length} members)…`;
       }
-      if (!latestBoardMetricsLoaded) {
-        if (statusEl) {
-          statusEl.textContent = latestPipelineBacklogLoaded
-            ? "Loading team closed metrics…"
-            : "Loading team board metrics (pipeline / closed)…";
+      latestPipelineBacklogLoaded = false;
+      latestBoardMetricsLoaded = false;
+      latestBoardMetrics = {};
+      teamPoolCacheId = null;
+      updateTeamRollupHeader();
+      const body = teamRefreshRequestBody();
+      const data = await enqueueTeamJira(async () => {
+        const res = await fetch("/run-team-posture-refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(3600000),
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          throw new Error((json && json.error) ? String(json.error) : "Team refresh failed");
         }
-        try {
-          if (!latestPipelineBacklogLoaded) {
-            await enqueueTeamJira(() => refreshPipelineBacklogCount());
-          }
-          if (!latestBoardMetricsLoaded) {
-            await enqueueTeamJira(() => refreshTeamClosedBoardMetrics());
-          }
-        } catch (err) {
-          lastError = err && err.message ? err.message : String(err);
-        }
+        return json;
+      });
+      const successCount = applyTeamRefreshResponse(data);
+      if ((data.warnings || []).length) {
+        console.warn("Team refresh warnings:", data.warnings.join(" "));
       }
       if (!activeTeamMemberId && teamMembers[0]) {
         activeTeamMemberId = teamMembers[0].id;
       }
       if (activeTeamMemberId) {
         selectTeamMember(activeTeamMemberId);
-        if (statusEl) {
-          statusEl.textContent = successCount === teamMembers.length
-            ? `All ${successCount} member(s) refreshed from Jira.`
-            : `Loaded ${successCount}/${teamMembers.length} member(s).${lastError ? " " + lastError : ""}`;
-        }
-      } else if (statusEl) {
-        statusEl.textContent = lastError
-          || `No member data loaded (${successCount}/${teamMembers.length} successful).`;
+      }
+      const poolN = data.query_meta && data.query_meta.broad_issue_count;
+      if (statusEl) {
+        statusEl.textContent = successCount === teamMembers.length
+          ? `All ${successCount} member(s) refreshed (${poolN != null ? poolN + " tickets in pool" : "shared pool"}). Use Download Team CSV for ticket rows.`
+          : `Loaded ${successCount}/${teamMembers.length} member(s).`;
       }
       updateTeamReportPeriodLabel();
       updateTeamRollupHeader();
@@ -2905,19 +2926,8 @@ async function refreshAllTeamMembers() {
         console.warn("Metric trends refresh skipped:", err);
       }
     } catch (err) {
-      if (!lastError) {
-        lastError = err && err.message ? err.message : String(err);
-      }
-      if (successCount > 0 && !latestBoardMetricsLoaded) {
-        try {
-          await ensureTeamBoardMetrics();
-        } catch (boardErr) {
-          console.warn("Board metrics after partial refresh:", boardErr);
-        }
-      }
-      if (statusEl) {
-        statusEl.textContent = lastError || "Refresh stopped due to a connection error.";
-      }
+      lastError = err && err.message ? err.message : String(err);
+      if (statusEl) statusEl.textContent = lastError || "Refresh stopped due to a connection error.";
       updateTeamRollupHeader();
       updateTeamDataModeHint();
     } finally {
@@ -3960,14 +3970,53 @@ document.getElementById("teamRemoveMemberBtn").addEventListener("click", () => {
   updateTeamRollupHeader();
 });
 
-function openTeamExport(kind) {
-  if (!latestTeamPosturePayload || !latestTeamPosturePayload.exports) return;
-  const url = latestTeamPosturePayload.exports[kind];
-  if (url) window.open(url, "_blank");
+async function downloadMemberExportCsv() {
+  const member = activeTeamMember();
+  const statusEl = document.getElementById("teamStatusSummary");
+  if (!member) {
+    if (statusEl) statusEl.textContent = "Select a member first.";
+    return;
+  }
+  if (snapshotViewMode.team !== "live") {
+    if (statusEl) statusEl.textContent = "Switch to Live and refresh before exporting ticket rows.";
+    return;
+  }
+  if (statusEl) statusEl.textContent = `Building CSV for ${member.name}…`;
+  const payload = teamFormToObject();
+  delete payload.assignee_username;
+  delete payload.member_name;
+  payload.team_members = [{ name: member.name, username: member.username }];
+  if (teamPoolCacheId) payload.pool_cache_id = teamPoolCacheId;
+  try {
+    const res = await fetch("/run-team-posture-board-export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(600000),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (statusEl) statusEl.textContent = data.error || "Export failed.";
+      return;
+    }
+    if (data.pool_cache_id) teamPoolCacheId = data.pool_cache_id;
+    if (Array.isArray(data.rows) && data.rows.length) {
+      downloadTeamCsvBlob(data.rows);
+      if (statusEl) statusEl.textContent = `CSV downloaded (${data.rows.length} rows) for ${member.name}.`;
+      return;
+    }
+    if (data.exports && data.exports.csv) {
+      window.open(data.exports.csv, "_blank");
+      if (statusEl) statusEl.textContent = `CSV download started for ${member.name}.`;
+    }
+  } catch (err) {
+    if (statusEl) statusEl.textContent = `Export error: ${err && err.message ? err.message : String(err)}`;
+  }
 }
 
-document.getElementById("teamExportCsvBtn").addEventListener("click", () => openTeamExport("csv"));
-document.getElementById("teamExportExcelBtn").addEventListener("click", () => openTeamExport("excel"));
+document.getElementById("teamExportCsvBtn").addEventListener("click", () => { void downloadMemberExportCsv(); });
+document.getElementById("teamExportExcelBtn").addEventListener("click", () => { void downloadMemberExportCsv(); });
+
 function mergeTeamExportRowsFromCache() {
   const exportPayloads = [];
   const missingMembers = [];
@@ -3997,7 +4046,10 @@ function mergeTeamExportRowsFromCache() {
 }
 
 function downloadTeamCsvBlob(allRows) {
-  const headers = Object.keys(allRows[0]);
+  const slimHeaders = ["Member Name", "Dashboard Bucket", "Issue Key", "Summary"];
+  const headers = allRows[0] && slimHeaders.every((h) => h in allRows[0])
+    ? slimHeaders
+    : Object.keys(allRows[0]);
   const csv = toCsv(allRows, headers);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -4040,7 +4092,9 @@ async function downloadTeamBoardCsv() {
   }
 
   if (statusEl) {
-    statusEl.textContent = "Building team export from Jira (one request per member — may take several minutes)…";
+    statusEl.textContent = teamPoolCacheId
+      ? "Building team CSV from cached issue pool…"
+      : "Building team CSV (one Jira fetch for all members)…";
   }
   const payload = teamFormToObject();
   delete payload.assignee_username;
@@ -4049,6 +4103,7 @@ async function downloadTeamBoardCsv() {
     name: m.name,
     username: m.username,
   }));
+  if (teamPoolCacheId) payload.pool_cache_id = teamPoolCacheId;
   try {
     const res = await fetch("/run-team-posture-board-export", {
       method: "POST",
@@ -4056,6 +4111,7 @@ async function downloadTeamBoardCsv() {
       body: JSON.stringify(payload),
     });
     const data = await res.json();
+    if (data.pool_cache_id) teamPoolCacheId = data.pool_cache_id;
     if (!res.ok) {
       if (statusEl) statusEl.textContent = data.error || data.details || "Team export failed.";
       if (cachedRows.length) {
@@ -5475,6 +5531,61 @@ def build_legacy_dashboard_payload(params: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def build_team_posture_broad_jql(params: Dict[str, Any]) -> str:
+    """Team-wide JQL (no assignee): one fetch for all roster members."""
+    return build_team_posture_jql(params, "", include_assignee=False)
+
+
+def _store_team_issue_pool(pool: Dict[str, Any]) -> str:
+    while len(TEAM_ISSUE_POOL_CACHE) >= TEAM_ISSUE_POOL_CACHE_MAX:
+        oldest_key = next(iter(TEAM_ISSUE_POOL_CACHE))
+        del TEAM_ISSUE_POOL_CACHE[oldest_key]
+    cache_id = uuid.uuid4().hex
+    TEAM_ISSUE_POOL_CACHE[cache_id] = pool
+    return cache_id
+
+
+def fetch_team_issue_pool(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Download all issues for the team report window once (with changelog when possible)."""
+    base_url = (params.get("base_url") or "").strip()
+    if not base_url:
+        raise ValueError("base_url is required")
+    page_size = int(params.get("page_size") or 50)
+    max_issues = int(params.get("max_issues") or 0)
+    verify_ssl = bool(params.get("verify_ssl", True))
+    broad_jql = build_team_posture_broad_jql(params)
+    warnings: List[str] = []
+    changelog_included = True
+    try:
+        broad_issues = fetch_jira_issues(
+            base_url, broad_jql, page_size, max_issues, verify_ssl, include_changelog=True
+        )
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        if status_code == 500:
+            broad_issues = fetch_jira_issues(
+                base_url, broad_jql, page_size, max_issues, verify_ssl, include_changelog=False
+            )
+            changelog_included = False
+            warnings.append(
+                "Jira returned 500 with changelog expansion; worked-on/reopened metrics may be incomplete."
+            )
+        else:
+            raise
+    cap = team_board_issue_fetch_cap(max_issues)
+    if max_issues and max_issues > 0 and len(broad_issues) >= max_issues:
+        warnings.append(f"Broad team query capped at {max_issues} issues (max_issues).")
+    elif not max_issues and cap and len(broad_issues) >= cap:
+        warnings.append(f"Broad team query capped at {cap} issues.")
+    return {
+        "issues": broad_issues,
+        "broad_jql": broad_jql,
+        "warnings": warnings,
+        "changelog_included": changelog_included,
+        "issue_count": len(broad_issues),
+    }
+
+
 def build_team_posture_jql(params: Dict[str, Any], assignee_username: str, include_assignee: bool = True) -> str:
     projects = parse_csv_list(params.get("projects"))
     issue_types = parse_csv_list(params.get("issue_types"))
@@ -6341,6 +6452,9 @@ def build_member_dashboard_tagged_rows(
     csd_assigned_dev_field: str,
     project_rules: Dict[str, str],
     sla_hours: float = 24.0,
+    *,
+    slim: bool = False,
+    member_name: str = "",
 ) -> List[Dict[str, Any]]:
     """
     Build ticket-level rows tagged with dashboard buckets expected by Operations Team:
@@ -6409,55 +6523,49 @@ def build_member_dashboard_tagged_rows(
     if oldest_key:
         tags_by_key.setdefault(oldest_key, set()).add("oldest_open")
 
-    # Expanded export shape: one row per ticket per dashboard bucket.
+    # One row per ticket per dashboard bucket.
     rows: List[Dict[str, Any]] = []
     for key in sorted(tags_by_key.keys()):
         issue = by_key.get(key)
         if not issue:
             continue
-        raw = issue_to_raw_row(issue)
+        fields = issue.get("fields") or {}
         for tag in sorted(tags_by_key[key]):
-            rows.append({"Dashboard Bucket": tag, **raw})
+            if slim:
+                rows.append(
+                    {
+                        "Member Name": member_name,
+                        "Dashboard Bucket": tag,
+                        "Issue Key": key,
+                        "Summary": fields.get("summary") or "",
+                    }
+                )
+            else:
+                raw = issue_to_raw_row(issue)
+                rows.append({"Dashboard Bucket": tag, **raw})
     return rows
 
 
-def build_team_posture_payload(params: Dict[str, Any]) -> Dict[str, Any]:
+def build_team_member_posture_from_pool(
+    broad_issues: List[Dict[str, Any]],
+    params: Dict[str, Any],
+    assignee_username: str,
+    member_name: str,
+    *,
+    broad_jql: str = "",
+    pool_warnings: Optional[List[str]] = None,
+    include_raw_rows: bool = False,
+    slim_export: bool = True,
+) -> Dict[str, Any]:
+    """Compute dashboard metrics for one member from a shared issue pool (no Jira fetch)."""
     base_url = (params.get("base_url") or "").strip()
-    if not base_url:
-        raise ValueError("base_url is required")
-    assignee_username = (params.get("assignee_username") or "").strip()
-    if not assignee_username:
-        raise ValueError("assignee_username is required")
-    member_name = (params.get("member_name") or assignee_username).strip()
-
-    page_size = int(params.get("page_size") or 50)
-    max_issues = int(params.get("max_issues") or 0)
     verify_ssl = bool(params.get("verify_ssl", True))
     csd_assigned_dev_field = (params.get("csd_assigned_dev_field") or "").strip()
     project_rules = {"CSSD": "Closed", "CSD": "Ready For Production Users"}
     jql = build_team_posture_jql(params, assignee_username, include_assignee=True)
-    broad_jql = build_team_posture_jql(params, assignee_username, include_assignee=False)
-    warnings: List[str] = []
-
-    try:
-        issues = fetch_jira_issues(base_url, jql, page_size, max_issues, verify_ssl, include_changelog=True)
-    except requests.HTTPError as exc:
-        status_code = exc.response.status_code if exc.response is not None else None
-        if status_code == 500:
-            issues = fetch_jira_issues(base_url, jql, page_size, max_issues, verify_ssl, include_changelog=False)
-            warnings.append("Jira returned 500 with changelog expansion; reopened count may be incomplete.")
-        else:
-            raise
-
-    try:
-        broad_issues = fetch_jira_issues(base_url, broad_jql, page_size, max_issues, verify_ssl, include_changelog=True)
-    except requests.HTTPError as exc:
-        status_code = exc.response.status_code if exc.response is not None else None
-        if status_code == 500:
-            broad_issues = fetch_jira_issues(base_url, broad_jql, page_size, max_issues, verify_ssl, include_changelog=False)
-            warnings.append("Jira returned 500 on broad team query with changelog expansion; worked-on/reopened may be incomplete.")
-        else:
-            raise
+    if not broad_jql:
+        broad_jql = build_team_posture_broad_jql(params)
+    warnings: List[str] = list(pool_warnings or [])
 
     owned_issues = issues_owned_by_member(broad_issues, assignee_username, csd_assigned_dev_field)
     member_scope_issues = issues_in_member_scope(broad_issues, assignee_username, csd_assigned_dev_field)
@@ -6498,20 +6606,25 @@ def build_team_posture_payload(params: Dict[str, Any]) -> Dict[str, Any]:
     closed_cssd_csd_count = count_closed_cssd_csd_combined_for_member(
         broad_issues, assignee_username, csd_assigned_dev_field, project_rules
     )
-    raw_rows = build_member_dashboard_tagged_rows(
-        broad_issues,
-        assignee_username,
-        csd_assigned_dev_field,
-        project_rules,
-        sla_hours=24.0,
-    )
+    raw_rows: List[Dict[str, Any]] = []
+    if include_raw_rows:
+        raw_rows = build_member_dashboard_tagged_rows(
+            broad_issues,
+            assignee_username,
+            csd_assigned_dev_field,
+            project_rules,
+            sla_hours=24.0,
+            slim=slim_export,
+            member_name=member_name,
+        )
 
     return {
         "member": {"name": member_name, "assignee_username": assignee_username},
         "jql": jql,
         "broad_jql": broad_jql,
         "query_meta": {
-            "assignee_issue_count": len(issues),
+            "assignee_issue_count": len(owned_issues),
+            "owned_issue_count": len(owned_issues),
             "broad_issue_count": len(broad_issues),
         },
         "warnings": warnings,
@@ -6540,24 +6653,130 @@ def build_team_posture_payload(params: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def build_team_board_export_rows(params: Dict[str, Any], members: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def build_team_posture_payload(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Single-member posture: uses shared pool cache or fetches the team pool once."""
+    assignee_username = (params.get("assignee_username") or "").strip()
+    if not assignee_username:
+        raise ValueError("assignee_username is required")
+    member_name = (params.get("member_name") or assignee_username).strip()
+    include_raw_rows = bool(params.get("include_raw_rows"))
+    slim_export = params.get("slim_export", True) is not False
+
+    pool_cache_id = (params.get("pool_cache_id") or "").strip()
+    pool: Optional[Dict[str, Any]] = None
+    if pool_cache_id and pool_cache_id in TEAM_ISSUE_POOL_CACHE:
+        pool = TEAM_ISSUE_POOL_CACHE[pool_cache_id]
+    if pool is None:
+        pool = fetch_team_issue_pool(params)
+        pool_cache_id = _store_team_issue_pool(pool)
+
+    payload = build_team_member_posture_from_pool(
+        pool["issues"],
+        params,
+        assignee_username,
+        member_name,
+        broad_jql=pool.get("broad_jql") or "",
+        pool_warnings=pool.get("warnings") or [],
+        include_raw_rows=include_raw_rows,
+        slim_export=slim_export,
+    )
+    payload["pool_cache_id"] = pool_cache_id
+    return payload
+
+
+def build_team_posture_refresh_payload(
+    params: Dict[str, Any], members: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Fetch team issue pool once, compute dashboard metrics for every roster member."""
+    if not members:
+        raise ValueError("team_members is required")
+    print("[run-team-posture-refresh] fetching team issue pool", flush=True)
+    pool = fetch_team_issue_pool(params)
+    pool_cache_id = _store_team_issue_pool(pool)
+    broad_jql = pool.get("broad_jql") or ""
+    warnings: List[str] = list(pool.get("warnings") or [])
+
+    member_payloads: List[Dict[str, Any]] = []
+    for member in members:
+        username = (member.get("username") or "").strip()
+        if not username:
+            continue
+        name = (member.get("name") or username).strip()
+        print(f"[run-team-posture-refresh] metrics member={name}", flush=True)
+        member_payloads.append(
+            build_team_member_posture_from_pool(
+                pool["issues"],
+                params,
+                username,
+                name,
+                broad_jql=broad_jql,
+                pool_warnings=warnings,
+                include_raw_rows=False,
+            )
+        )
+
+    board_metrics: Dict[str, Any] = {}
+    pipeline_jql = ""
+    closed_jql = ""
+    try:
+        board_params = dict(params)
+        board_params["member_usernames"] = [
+            (m.get("username") or "").strip()
+            for m in members
+            if (m.get("username") or "").strip()
+        ]
+        board_payload = build_team_board_metrics_payload(board_params)
+        board_metrics = board_payload.get("board_metrics") or {}
+        pipeline_jql = board_payload.get("pipeline_backlog_jql") or ""
+        closed_jql = board_payload.get("closed_team_jql") or ""
+        warnings.extend(board_payload.get("warnings") or [])
+    except Exception as board_exc:
+        warnings.append(f"Board metrics: {board_exc}")
+
+    return {
+        "pool_cache_id": pool_cache_id,
+        "broad_jql": broad_jql,
+        "query_meta": {
+            "broad_issue_count": pool.get("issue_count", 0),
+            "member_count": len(member_payloads),
+            "changelog_included": pool.get("changelog_included", True),
+        },
+        "warnings": warnings,
+        "members": member_payloads,
+        "board_metrics": board_metrics,
+        "pipeline_backlog_jql": pipeline_jql,
+        "closed_team_jql": closed_jql,
+    }
+
+
+def build_team_board_export_rows(
+    params: Dict[str, Any],
+    members: List[Dict[str, Any]],
+    pool: Optional[Dict[str, Any]] = None,
+    *,
+    slim: bool = True,
+) -> List[Dict[str, Any]]:
+    """Build export rows from a shared issue pool (one Jira fetch unless pool provided)."""
+    if pool is None:
+        pool = fetch_team_issue_pool(params)
+    broad_issues = pool.get("issues") or []
+    csd_assigned_dev_field = (params.get("csd_assigned_dev_field") or "").strip()
+    project_rules = {"CSSD": "Closed", "CSD": "Ready For Production Users"}
     rows: List[Dict[str, Any]] = []
     for member in members:
         username = (member.get("username") or "").strip()
         if not username:
             continue
-        member_params = dict(params)
-        member_params["assignee_username"] = username
-        member_params["member_name"] = (member.get("name") or username).strip()
-        payload = build_team_posture_payload(member_params)
-        for raw in payload.get("raw_rows") or []:
-            rows.append(
-                {
-                    "Member Name": payload["member"]["name"],
-                    "Assignee Username": payload["member"]["assignee_username"],
-                    **raw,
-                }
-            )
+        name = (member.get("name") or username).strip()
+        member_rows = build_member_dashboard_tagged_rows(
+            broad_issues,
+            username,
+            csd_assigned_dev_field,
+            project_rules,
+            slim=slim,
+            member_name=name,
+        )
+        rows.extend(member_rows)
     return rows
 
 
@@ -6728,58 +6947,83 @@ def run_legacy_dashboard():
         return jsonify({"error": str(exc)}), 400
 
 
+@app.route("/run-team-posture-refresh", methods=["POST"])
+def run_team_posture_refresh():
+    try:
+        params = request.get_json(force=True)
+        members = params.get("team_members") or []
+        if not isinstance(members, list) or not members:
+            return jsonify({"error": "team_members is required"}), 400
+        print(f"[run-team-posture-refresh] start roster={len(members)}", flush=True)
+        payload = build_team_posture_refresh_payload(params, members)
+        print("[run-team-posture-refresh] done", flush=True)
+        return jsonify(payload)
+    except requests.HTTPError as exc:
+        details = exc.response.text if exc.response is not None else str(exc)
+        return jsonify({"error": f"HTTP error: {exc}", "details": details}), 400
+    except Exception as exc:
+        print(f"[run-team-posture-refresh] error: {exc}", flush=True)
+        return jsonify({"error": str(exc)}), 400
+
+
 @app.route("/run-team-posture", methods=["POST"])
 def run_team_posture():
     try:
         params = request.get_json(force=True)
         member_label = (params.get("member_name") or params.get("assignee_username") or "?").strip()
-        print(f"[run-team-posture] start member={member_label}", flush=True)
+        include_raw_rows = bool(params.get("include_raw_rows"))
+        print(f"[run-team-posture] start member={member_label} raw_rows={include_raw_rows}", flush=True)
         payload = build_team_posture_payload(params)
         print(f"[run-team-posture] done member={member_label}", flush=True)
-        out_dir = Path(tempfile.mkdtemp(prefix="team_posture_"))
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_member = re.sub(r"[^A-Za-z0-9_-]+", "_", payload["member"]["name"])[:40] or "member"
-        csv_path = out_dir / f"team_posture_{safe_member}_{stamp}.csv"
-        summary_csv = out_dir / f"team_posture_summary_{safe_member}_{stamp}.csv"
-        excel_path = out_dir / f"team_posture_{safe_member}_{stamp}.xlsx"
 
-        raw_rows = payload["raw_rows"]
-        write_csv(csv_path, raw_rows, list(raw_rows[0].keys()) if raw_rows else ["Issue Key"])
-        mets = payload.get("metrics") or {}
-        summary_rows = [
-            {"Metric": "Resolved (Owned)", "Value": mets.get("resolved_owned_count", mets.get("resolved_count", 0))},
-            {"Metric": "Resolved (Contributed)", "Value": mets.get("resolved_contributed_count", 0)},
-            {"Metric": "Resolved (Last 8 Hours)", "Value": mets.get("resolved_last_8h_count", 0)},
-            {"Metric": "Queue Backlog", "Value": mets.get("queue_backlog_count", 0)},
-            {"Metric": "In Progress", "Value": mets.get("in_progress_count", 0)},
-            {"Metric": "Worked Status (Last 8 Hours)", "Value": mets.get("worked_status_last_8h_count", 0)},
-            {"Metric": "Worked Status (Others, Last 8 Hours)", "Value": mets.get("worked_status_last_8h_assigned_others_count", 0)},
-            {"Metric": "Resolved (Report Period)", "Value": mets.get("resolved_in_period_count", 0)},
-            {"Metric": "Assigned Open Tickets", "Value": payload["metrics"]["assigned_open_count"]},
-            {"Metric": "Reopened Tickets", "Value": payload["metrics"]["reopened_count"]},
-            {"Metric": "Worked On (Assigned to Others)", "Value": payload["metrics"]["worked_on_assigned_others_count"]},
-            {"Metric": "SLA Breach Count", "Value": payload["metrics"]["sla_breach_count"]},
-            {"Metric": "Open Tickets < 8h to SLA Breach", "Value": payload["metrics"]["open_near_sla_breach_8h_count"]},
-            {"Metric": "Oldest Open Ticket", "Value": payload["oldest_open"].get("issue_key", "")},
-            {"Metric": "Oldest Open Age Days", "Value": payload["oldest_open"].get("age_days", "")},
-        ]
-        write_csv(summary_csv, summary_rows, ["Metric", "Value"])
-        write_excel(
-            excel_path,
-            {
-                "Raw Tickets": raw_rows,
-                "Summary": summary_rows,
-            },
-        )
-        export_id = uuid.uuid4().hex
-        TEAM_EXPORT_CACHE[export_id] = {
-            "csv": str(csv_path),
-            "excel": str(excel_path),
-        }
-        payload["exports"] = {
-            "csv": f"/download-team-posture-export?export_id={export_id}&kind=csv",
-            "excel": f"/download-team-posture-export?export_id={export_id}&kind=excel",
-        }
+        if include_raw_rows:
+            out_dir = Path(tempfile.mkdtemp(prefix="team_posture_"))
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_member = re.sub(r"[^A-Za-z0-9_-]+", "_", payload["member"]["name"])[:40] or "member"
+            csv_path = out_dir / f"team_posture_{safe_member}_{stamp}.csv"
+            summary_csv = out_dir / f"team_posture_summary_{safe_member}_{stamp}.csv"
+            excel_path = out_dir / f"team_posture_{safe_member}_{stamp}.xlsx"
+
+            raw_rows = payload.get("raw_rows") or []
+            headers = list(TEAM_EXPORT_SLIM_COLUMNS) if raw_rows else ["Issue Key"]
+            if raw_rows and "Member Name" not in raw_rows[0]:
+                headers = list(raw_rows[0].keys())
+            write_csv(csv_path, raw_rows, headers)
+            mets = payload.get("metrics") or {}
+            summary_rows = [
+                {"Metric": "Resolved (Owned)", "Value": mets.get("resolved_owned_count", mets.get("resolved_count", 0))},
+                {"Metric": "Resolved (Contributed)", "Value": mets.get("resolved_contributed_count", 0)},
+                {"Metric": "Resolved (Last 8 Hours)", "Value": mets.get("resolved_last_8h_count", 0)},
+                {"Metric": "Queue Backlog", "Value": mets.get("queue_backlog_count", 0)},
+                {"Metric": "In Progress", "Value": mets.get("in_progress_count", 0)},
+                {"Metric": "Worked Status (Last 8 Hours)", "Value": mets.get("worked_status_last_8h_count", 0)},
+                {"Metric": "Worked Status (Others, Last 8 Hours)", "Value": mets.get("worked_status_last_8h_assigned_others_count", 0)},
+                {"Metric": "Resolved (Report Period)", "Value": mets.get("resolved_in_period_count", 0)},
+                {"Metric": "Assigned Open Tickets", "Value": payload["metrics"]["assigned_open_count"]},
+                {"Metric": "Reopened Tickets", "Value": payload["metrics"]["reopened_count"]},
+                {"Metric": "Worked On (Assigned to Others)", "Value": payload["metrics"]["worked_on_assigned_others_count"]},
+                {"Metric": "SLA Breach Count", "Value": payload["metrics"]["sla_breach_count"]},
+                {"Metric": "Open Tickets < 8h to SLA Breach", "Value": payload["metrics"]["open_near_sla_breach_8h_count"]},
+                {"Metric": "Oldest Open Ticket", "Value": payload["oldest_open"].get("issue_key", "")},
+                {"Metric": "Oldest Open Age Days", "Value": payload["oldest_open"].get("age_days", "")},
+            ]
+            write_csv(summary_csv, summary_rows, ["Metric", "Value"])
+            write_excel(
+                excel_path,
+                {
+                    "Raw Tickets": raw_rows,
+                    "Summary": summary_rows,
+                },
+            )
+            export_id = uuid.uuid4().hex
+            TEAM_EXPORT_CACHE[export_id] = {
+                "csv": str(csv_path),
+                "excel": str(excel_path),
+            }
+            payload["exports"] = {
+                "csv": f"/download-team-posture-export?export_id={export_id}&kind=csv",
+                "excel": f"/download-team-posture-export?export_id={export_id}&kind=excel",
+            }
         if params.get("fetch_board_metrics"):
             try:
                 board_params = dict(params)
@@ -6815,13 +7059,22 @@ def run_team_posture_board_export():
         members = params.get("team_members") or []
         if not isinstance(members, list) or not members:
             return jsonify({"error": "team_members is required"}), 400
+        pool_cache_id = (params.get("pool_cache_id") or "").strip()
+        pool: Optional[Dict[str, Any]] = None
+        if pool_cache_id and pool_cache_id in TEAM_ISSUE_POOL_CACHE:
+            pool = TEAM_ISSUE_POOL_CACHE[pool_cache_id]
+            print(f"[run-team-posture-board-export] using pool cache {pool_cache_id}", flush=True)
+        else:
+            print("[run-team-posture-board-export] fetching team issue pool", flush=True)
+            pool = fetch_team_issue_pool(params)
+            pool_cache_id = _store_team_issue_pool(pool)
         out_dir = Path(tempfile.mkdtemp(prefix="team_posture_board_"))
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         csv_path = out_dir / f"team_posture_board_{stamp}.csv"
-        rows = build_team_board_export_rows(params, members)
+        rows = build_team_board_export_rows(params, members, pool=pool, slim=True)
         if not rows:
-            return jsonify({"error": "No valid team members provided"}), 400
-        headers = list(rows[0].keys())
+            return jsonify({"error": "No export rows for the current filters and roster"}), 400
+        headers = list(TEAM_EXPORT_SLIM_COLUMNS)
         write_csv(csv_path, rows, headers)
         export_id = uuid.uuid4().hex
         TEAM_EXPORT_CACHE[export_id] = {
@@ -6830,6 +7083,7 @@ def run_team_posture_board_export():
         return jsonify(
             {
                 "rows": rows,
+                "pool_cache_id": pool_cache_id,
                 "exports": {
                     "csv": f"/download-team-posture-export?export_id={export_id}&kind=csv",
                 },

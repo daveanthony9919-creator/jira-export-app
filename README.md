@@ -38,6 +38,8 @@ Default dev URL: `http://127.0.0.1:5001`
 | `GET` | `/download-team-posture-export?export_id=&kind=` | Cached team export (`csv`, `excel`). |
 | `POST` | `/run-pipeline-backlog-count` | Fast **Pipeline Backlog** count (Jira search `total`, `maxResults=0`). |
 | `POST` | `/run-team-board-metrics` | **Team Closed** board metric (pass `skip_pipeline: true` for closed-only; omit for both). |
+| `POST` | `/run-team-posture-refresh` | **Refresh all roster members:** one broad Jira fetch, in-memory metrics per member, board metrics; returns `pool_cache_id` for export. |
+| `POST` | `/run-team-posture-board-export` | **Slim team CSV** (`Member Name`, `Dashboard Bucket`, `Issue Key`, `Summary`); pass `pool_cache_id` after refresh to avoid re-fetching Jira. |
 | `GET` | `/snapshots/list-options?report_id=` | Dropdown options for official saved reports (`exec`, `ops`, `legacy`). |
 | `GET` | `/snapshots/<id>` | Full snapshot record including saved `params`. |
 | `DELETE` | `/snapshots/<id>?report_id=` | Remove one saved snapshot (`report_id` optional guard). |
@@ -135,7 +137,8 @@ End-to-end Jira Search with changelog expansion, producing:
 ## Team Member Ticket Posture (Team tab)
 
 - **Live refresh:** **Refresh from Jira** (all roster members + board metrics) and **Refresh selected member** live in **Team Posture Variables & Settings** (collapsible card). Status hint (`#teamDataModeHint`) shows Live vs archive and cached member count.
-- **Refresh behavior:** Member posture calls are serialized; pipeline count starts in parallel with the member loop, then Team Closed loads. Use **Save snapshot** to persist an official report to SQLite.
+- **Refresh behavior:** **Refresh from Jira** calls `POST /run-team-posture-refresh` — **one** broad JQL fetch for the whole team, then per-member metrics in memory (no ticket rows). Pipeline + Team Closed load with the same refresh. Use **Save snapshot** to persist metrics to SQLite.
+- **Export:** **Download Team CSV** / per-member **Download CSV** build slim rows on demand from the server issue pool (`pool_cache_id` from the last refresh when still in server memory).
 - **Mobile:** Hamburger sidebar and responsive metric/chart grids at narrow widths.
 - **Team roster:** add/remove members (display name + **Assignee username**); roster stored in **browser localStorage**.  
 - **Jira queries:**  
