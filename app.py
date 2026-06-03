@@ -2910,7 +2910,8 @@ async function refreshAllTeamMembers() {
         });
         const json = await res.json();
         if (!res.ok) {
-          throw new Error((json && json.error) ? String(json.error) : "Team refresh failed");
+          const detail = json && json.details ? String(json.details).slice(0, 240) : "";
+          throw new Error((json && json.error) ? String(json.error) + (detail ? ` — ${detail}` : "") : "Team refresh failed");
         }
         return json;
       });
@@ -2973,7 +2974,7 @@ function updateTeamReportPeriodLabel() {
   const a = formatReportDatetimeLocal(start);
   const b = formatReportDatetimeLocal(end);
   if (start && end) {
-    el.textContent = "Report period (created): " + a + " -> " + b + " (Jira pool: created >= start AND created <= end)";
+    el.textContent = "Report period (created): " + a + " -> " + b + " (Jira pool: created >= start AND created < end+1min)";
   } else if (start) {
     el.textContent = `Report period (created): from ${a}`;
   } else {
@@ -3354,7 +3355,7 @@ async function renderMetricSparkline(wrap, reportId, metricKey, memberUsername, 
   });
 }
 
-async function applyDeltaToCard(card, reportId, metricKey, memberUsername, snapshotId, liveBoard) {
+async function applyDeltaToCard(card, reportId, metricKey, memberUsername, snapshotId, liveBoard, comparePrefetched) {
   const sub = card.querySelector(".metric-trend-sub");
   if (!sub) return;
   const valueEl = card.querySelector(".value");
@@ -3366,7 +3367,10 @@ async function applyDeltaToCard(card, reportId, metricKey, memberUsername, snaps
   }
   let deltas = [];
   let baselineSource = "prior report";
-  if (snapshotId) {
+  if (comparePrefetched) {
+    deltas = comparePrefetched.deltas || [];
+    baselineSource = (comparePrefetched.baseline && comparePrefetched.baseline.source) || "prior report";
+  } else if (snapshotId) {
     let url = `/snapshots/compare?report_id=${encodeURIComponent(reportId)}&snapshot_id=${snapshotId}`;
     if (memberUsername) url += `&member_username=${encodeURIComponent(memberUsername)}`;
     const res = await fetch(url);
@@ -3418,6 +3422,20 @@ async function refreshOpsMetricTrends(snapshotId, mode) {
     "worked_status_last_8h_assigned_others_count",
     "resolved_last_8h_count",
   ]);
+  let boardCompare = null;
+  let memberCompare = null;
+  if (mode === "archive" && snapshotId) {
+    try {
+      const boardRes = await fetch(`/snapshots/compare?report_id=${encodeURIComponent(reportId)}&snapshot_id=${encodeURIComponent(snapshotId)}`);
+      if (boardRes.ok) boardCompare = await boardRes.json();
+      if (memberUsername) {
+        const memberRes = await fetch(`/snapshots/compare?report_id=${encodeURIComponent(reportId)}&snapshot_id=${encodeURIComponent(snapshotId)}&member_username=${encodeURIComponent(memberUsername)}`);
+        if (memberRes.ok) memberCompare = await memberRes.json();
+      }
+    } catch (err) {
+      console.warn("Snapshot compare prefetch failed:", err);
+    }
+  }
   for (const card of cards) {
     const metricKey = card.getAttribute("data-metric-key");
     const scope = card.getAttribute("data-metric-scope");
@@ -3438,9 +3456,10 @@ async function refreshOpsMetricTrends(snapshotId, mode) {
     }
     try {
       if (mode === "archive" && snapshotId) {
-        await applyDeltaToCard(card, reportId, metricKey, uname, snapshotId, null);
+        const prefetched = scope === "member" ? memberCompare : boardCompare;
+        await applyDeltaToCard(card, reportId, metricKey, uname, snapshotId, null, prefetched);
       } else if (mode === "live") {
-        await applyDeltaToCard(card, reportId, metricKey, uname, null, scope === "board" ? liveBoard : { memberMetrics: (latestTeamPosturePayload && latestTeamPosturePayload.metrics) || {} });
+        await applyDeltaToCard(card, reportId, metricKey, uname, null, scope === "board" ? liveBoard : { memberMetrics: (latestTeamPosturePayload && latestTeamPosturePayload.metrics) || {} }, null);
       }
     } catch (err) {
       console.warn("Metric card trend failed:", metricKey, err);
@@ -3968,7 +3987,7 @@ document.getElementById("teamPreviewJqlBtn")?.addEventListener("click", async ()
     return;
   }
   const endNote = data.end_dt
-    ? "End in JQL: created <= \"" + (data.end_dt_jql || data.end_dt) + "\""
+    ? "End in JQL: created < " + (data.end_dt_jql || data.end_dt)
     : "No end date - pool is not capped by created upper bound.";
   if (el) {
     el.textContent = [
@@ -4312,13 +4331,20 @@ def normalize_dt_local(value: Optional[str]) -> Optional[str]:
 
 
 def normalize_dt_jql_end(value: Optional[str]) -> Optional[str]:
-    """Upper bound for JQL <= clauses: include the full selected minute (datetime-local has no seconds)."""
+    """Exclusive upper bound for JQL `<` clauses (includes the full selected minute).
+
+    Jira rejects second-level literals like ``17:00:59``; bumping by one minute and
+    using ``created < "17:01"`` includes everything through ``17:00:59``.
+    """
     normalized = normalize_dt_local(value)
     if not normalized:
         return None
-    # "YYYY-MM-DD HH:MM" from datetime-local → include through :59 of that minute.
-    if len(normalized) == 16 and normalized[10] == " ":
-        return f"{normalized}:59"
+    if len(normalized) >= 16 and normalized[10] == " ":
+        try:
+            dt = datetime.strptime(normalized[:16], "%Y-%m-%d %H:%M")
+            return (dt + timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            return normalized
     return normalized
 
 
@@ -5656,7 +5682,7 @@ def build_team_posture_jql(params: Dict[str, Any], assignee_username: str, inclu
     if start_dt:
         clauses.append(f'created >= "{start_dt}"')
     if end_dt:
-        clauses.append(f'created <= "{end_dt}"')
+        clauses.append(f'created < "{end_dt}"')
     return (" AND ".join(clauses) if clauses else "order by created desc") + " ORDER BY created DESC"
 
 
@@ -5682,7 +5708,7 @@ def build_team_closed_board_jql(params: Dict[str, Any]) -> str:
     if start_dt:
         clauses.append(f'updated >= "{start_dt}"')
     if end_dt:
-        clauses.append(f'updated <= "{end_dt}"')
+        clauses.append(f'updated < "{end_dt}"')
     return " AND ".join(clauses) + " ORDER BY updated DESC"
 
 
@@ -7044,6 +7070,7 @@ def run_team_posture_refresh():
         return jsonify(payload)
     except requests.HTTPError as exc:
         details = exc.response.text if exc.response is not None else str(exc)
+        print(f"[run-team-posture-refresh] HTTP error: {details[:500]}", flush=True)
         return jsonify({"error": f"HTTP error: {exc}", "details": details}), 400
     except Exception as exc:
         print(f"[run-team-posture-refresh] error: {exc}", flush=True)
