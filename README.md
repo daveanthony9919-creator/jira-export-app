@@ -49,6 +49,8 @@ Default dev URL: `http://127.0.0.1:5001`
 | `POST` | `/snapshots/compare-live` | Compare current live metrics to last snapshot / manual baseline. |
 | `GET` | `/snapshots/trends?report_id=&metric_key=` | Time series for a metric (optional API). |
 | `GET` | `/snapshots/label-trends?report_id=&member_username=` | Label trends: `ops` requires `member_username`; `legacy` uses whole-report `charts.label_distribution` from saves. |
+| `GET` | `/snapshots/audit?report_id=` | Data-quality audit of saved snapshots (issues + warnings per row). |
+| `POST` | `/snapshots/migrate` | Backfill `trend.*` from `view` data (`{"report_id":"legacy"}` or `{"snapshot_id":5}`). |
 | `POST` / `GET` | `/manual-baselines` | Manual comparison fallback values when no prior snapshot exists. |
 
 ---
@@ -69,6 +71,8 @@ SQLite database (stdlib only) stores **manually saved** dashboard runs. Refreshi
 
 Backup `jira_export_app/data/snapshots.db` with the app folder. The file is gitignored by default.
 
+**Audit / repair:** `python audit_snapshots.py` lists gaps (missing label_distribution, trend fields, params). `python audit_snapshots.py --migrate` backfills `trend` from `view` without re-running Jira. New saves run the same normalization automatically. API: `GET /snapshots/audit`, `POST /snapshots/migrate`.
+
 ---
 
 ## Ticket trend (Legacy dashboard tab)
@@ -79,9 +83,9 @@ Open **Ticket trend** in the sidebar, then **Show Report Variables & Settings** 
 
 | Card | Source | Default status gate | Default aggregate |
 |------|--------|---------------------|-------------------|
-| **TTFR CSSD** | `customfield_10318` per CSSD ticket | *(blank = any ticket with TTFR SLA)* | Median |
-| **TTFR CSD** | Linked **CSSD** `customfield_10318` if `issuelinks` to `CSSD-*`; else CSD SLA | *(blank)* | Median |
-| **TTR CSSD** | `customfield_10317`, else `resolutiondate − created` | `Closed` | Median |
+| **TTFR CSSD** | `customfield_10318` elapsedTime (+ optional stop−created fallback) | *(blank = any ticket with TTFR SLA)* | Median |
+| **TTFR CSD** | Linked **CSSD** `customfield_10318` if linked; else CSD SLA (+ optional fallback) | *(blank)* | Median |
+| **TTR CSSD** | `customfield_10317` elapsedTime (+ optional `resolutiondate − created`) | `Closed` | Median |
 | **TTR CSD** | Same as TTR CSSD on CSD tickets | `Ready For Production Users` | Median |
 
 Card subtitle shows the chosen aggregate and ticket count (e.g. `mean · 42 ticket(s)`). Saved snapshots store the numeric rollup under `ttfr_*_median_hours` / `ttr_*_median_hours` regardless of aggregate name.

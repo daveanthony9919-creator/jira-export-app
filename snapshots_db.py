@@ -146,6 +146,7 @@ def save_snapshot(
     note: Optional[str] = None,
     trigger_type: str = "manual",
 ) -> int:
+    metrics = normalize_snapshot_metrics(report_id, metrics)
     captured_at = _utc_now_iso()
     with db_connection() as conn:
         cur = conn.execute(
@@ -704,19 +705,29 @@ def extract_metrics_for_save(report_id: str, payload: Dict[str, Any]) -> Dict[st
         }
     if report_id == "legacy":
         kpis = payload.get("kpis") or {}
+        charts = payload.get("charts") or {}
+        trend = {
+            "issue_count": kpis.get("issue_count"),
+            "transition_count": kpis.get("transition_count"),
+            "comment_count": kpis.get("comment_count"),
+            "date_window_days": kpis.get("date_window_days"),
+        }
+        for key in (
+            "ttfr_cssd_median_hours",
+            "ttfr_csd_median_hours",
+            "ttr_cssd_median_hours",
+            "ttr_csd_median_hours",
+        ):
+            if kpis.get(key) is not None:
+                trend[key] = kpis.get(key)
         return {
             "view": {
                 "kpis": kpis,
-                "charts": payload.get("charts"),
+                "charts": charts,
                 "insights": payload.get("insights"),
                 "warnings": payload.get("warnings"),
             },
-            "trend": {
-                "issue_count": kpis.get("issue_count"),
-                "transition_count": kpis.get("transition_count"),
-                "comment_count": kpis.get("comment_count"),
-                "date_window_days": kpis.get("date_window_days"),
-            },
+            "trend": trend,
         }
     if report_id == "ops":
         return payload
@@ -799,3 +810,202 @@ def snapshot_to_display(snapshot_id: int) -> Optional[Dict[str, Any]]:
             "members": view.get("members") or [],
         }
     return None
+
+
+def normalize_snapshot_metrics(report_id: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
+    """Ensure trend.* mirrors view data so compare/trend series work consistently."""
+    if not isinstance(metrics, dict):
+        return {"view": {}, "trend": {}}
+    out = json.loads(json.dumps(metrics, default=str))
+    view = out.setdefault("view", {})
+    trend = out.setdefault("trend", {})
+
+    if report_id == "exec":
+        kpis = view.get("kpis") or {}
+        for key in EXEC_TREND_KEYS:
+            if trend.get(key) is not None:
+                continue
+            nested = kpis.get(key)
+            if isinstance(nested, dict) and nested.get("period2") is not None:
+                trend[key] = nested.get("period2")
+            elif nested is not None and not isinstance(nested, dict):
+                trend[key] = nested
+
+    elif report_id == "legacy":
+        kpis = view.get("kpis") or {}
+        for key in LEGACY_TREND_KEYS:
+            if trend.get(key) is None and kpis.get(key) is not None:
+                trend[key] = kpis.get(key)
+
+    elif report_id == "ops":
+        board = view.get("board") or {}
+        trend_board = trend.setdefault("board", {})
+        for key in OPS_BOARD_METRIC_KEYS:
+            if trend_board.get(key) is None and board.get(key) is not None:
+                trend_board[key] = board.get(key)
+        view_members = view.get("members") or []
+        if not isinstance(view_members, list):
+            view_members = []
+        trend_members = trend.get("members") or []
+        if not isinstance(trend_members, list):
+            trend_members = []
+        by_username = {
+            (m.get("username") or "").strip().lower(): m for m in trend_members if m.get("username")
+        }
+        merged_trend_members: List[Dict[str, Any]] = []
+        for vm in view_members:
+            uname = (vm.get("username") or "").strip()
+            uname_key = uname.lower()
+            metrics_obj = vm.get("metrics") or {}
+            existing = by_username.get(uname_key) or {}
+            trend_m = dict(existing.get("metrics") or {})
+            for key in OPS_MEMBER_METRIC_KEYS:
+                if trend_m.get(key) is None and metrics_obj.get(key) is not None:
+                    trend_m[key] = metrics_obj.get(key)
+            merged_trend_members.append(
+                {
+                    "username": uname,
+                    "name": vm.get("name") or existing.get("name") or uname,
+                    "metrics": trend_m,
+                }
+            )
+        trend["members"] = merged_trend_members
+
+    return out
+
+
+def audit_snapshot(snap: Dict[str, Any]) -> Dict[str, Any]:
+    """Return issues (errors) and warnings for one snapshot row."""
+    issues: List[str] = []
+    warnings: List[str] = []
+    rid = snap.get("report_id") or ""
+    metrics = snap.get("metrics") or {}
+    params = snap.get("params") or {}
+    view = metrics.get("view") or {}
+    trend = metrics.get("trend") or {}
+
+    if not isinstance(metrics, dict):
+        issues.append("metrics is not an object")
+    if not params:
+        warnings.append("empty params (Load saved settings may be limited)")
+
+    if rid == "exec":
+        if not view.get("kpis"):
+            issues.append("missing view.kpis")
+        kpis = view.get("kpis") or {}
+        for key in EXEC_TREND_KEYS:
+            nested = kpis.get(key)
+            has_view = isinstance(nested, dict) and nested.get("period2") is not None
+            if trend.get(key) is None and not has_view:
+                warnings.append(f"missing exec trend metric {key}")
+
+    elif rid == "legacy":
+        kpis = view.get("kpis") or {}
+        if not kpis:
+            issues.append("missing view.kpis")
+        charts = view.get("charts") or {}
+        if not charts.get("label_distribution"):
+            warnings.append("missing charts.label_distribution (label trend chart skips this save)")
+        for key in LEGACY_TREND_KEYS:
+            if trend.get(key) is None and kpis.get(key) is None:
+                if key.startswith(("ttfr_", "ttr_")):
+                    warnings.append(f"no SLA rollup stored for {key}")
+            elif trend.get(key) is None and kpis.get(key) is not None:
+                warnings.append(f"trend.{key} missing (fixable via migrate)")
+
+    elif rid == "ops":
+        members = view.get("members") or []
+        if not members:
+            issues.append("missing view.members")
+        else:
+            n = sum(1 for m in members if not (m.get("label_distribution") or {}))
+            if n:
+                warnings.append(f"{n} member(s) without label_distribution")
+        if not params.get("team_members"):
+            warnings.append("params missing team_members (roster not restorable from snapshot)")
+        board = view.get("board") or {}
+        trend_board = trend.get("board") or {}
+        missing_board = [
+            k for k in OPS_BOARD_METRIC_KEYS if board.get(k) is not None and trend_board.get(k) is None
+        ]
+        if missing_board:
+            warnings.append(f"trend.board missing: {', '.join(missing_board[:3])}{'…' if len(missing_board) > 3 else ''}")
+
+    elif rid:
+        issues.append(f"unknown report_id {rid!r}")
+
+    status = "error" if issues else ("warn" if warnings else "ok")
+    return {
+        "id": snap.get("id"),
+        "report_id": rid,
+        "captured_at": snap.get("captured_at"),
+        "note": snap.get("note") or "",
+        "status": status,
+        "issues": issues,
+        "warnings": warnings,
+    }
+
+
+def audit_all_snapshots(report_id: Optional[str] = None) -> Dict[str, Any]:
+    report_ids = [report_id] if report_id else [r[0] for r in REPORT_DEFINITIONS]
+    snapshots_out: List[Dict[str, Any]] = []
+    summary = {"total": 0, "ok": 0, "warn": 0, "error": 0}
+    for rid in report_ids:
+        if not rid:
+            continue
+        for snap in list_snapshots(rid, limit=500):
+            row = audit_snapshot(snap)
+            snapshots_out.append(row)
+            summary["total"] += 1
+            summary[row["status"]] = summary.get(row["status"], 0) + 1
+    return {"summary": summary, "snapshots": snapshots_out}
+
+
+def _metrics_migration_changes(before: Dict[str, Any], after: Dict[str, Any]) -> List[str]:
+    changes: List[str] = []
+    bt = before.get("trend") or {}
+    at = after.get("trend") or {}
+    for key in set(list(bt.keys()) + list(at.keys())):
+        if bt.get(key) != at.get(key):
+            changes.append(f"trend.{key}")
+    if (bt.get("board") or {}) != (at.get("board") or {}):
+        changes.append("trend.board")
+    if len(bt.get("members") or []) != len(at.get("members") or []):
+        changes.append("trend.members")
+    return changes
+
+
+def migrate_snapshot_metrics(snapshot_id: int) -> Dict[str, Any]:
+    snap = get_snapshot(snapshot_id)
+    if not snap:
+        return {"id": snapshot_id, "updated": False, "error": "not found"}
+    report_id = snap["report_id"]
+    before = snap["metrics"]
+    after = normalize_snapshot_metrics(report_id, before)
+    changes = _metrics_migration_changes(before, after)
+    if not changes:
+        return {"id": snapshot_id, "report_id": report_id, "updated": False, "changes": []}
+    with db_connection() as conn:
+        conn.execute(
+            "UPDATE snapshots SET metrics_json = ? WHERE id = ?",
+            (json.dumps(after, default=str), snapshot_id),
+        )
+        conn.commit()
+    return {"id": snapshot_id, "report_id": report_id, "updated": True, "changes": changes}
+
+
+def migrate_all_snapshots(report_id: Optional[str] = None) -> Dict[str, Any]:
+    report_ids = [report_id] if report_id else [r[0] for r in REPORT_DEFINITIONS]
+    scanned = 0
+    updated = 0
+    details: List[Dict[str, Any]] = []
+    for rid in report_ids:
+        if not rid:
+            continue
+        for snap in list_snapshots(rid, limit=500):
+            scanned += 1
+            result = migrate_snapshot_metrics(snap["id"])
+            if result.get("updated"):
+                updated += 1
+                details.append(result)
+    return {"scanned": scanned, "updated": updated, "details": details}

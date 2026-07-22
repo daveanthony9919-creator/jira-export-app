@@ -1,5 +1,9 @@
 # CSMS Reporting Notes
 
+## 2026-06-04
+
+- **Snapshot audit / migrate:** `snapshots_db.audit_all_snapshots()`, `migrate_all_snapshots()`, `normalize_snapshot_metrics()` on every save. CLI: `python audit_snapshots.py` / `--migrate`. API: `GET /snapshots/audit`, `POST /snapshots/migrate`.
+
 ## 2026-05-27
 
 - **Operations Team performance:** `POST /run-team-posture-refresh` fetches **one** broad team JQL (with changelog when Jira allows), computes all member dashboard metrics in memory, and caches the issue pool server-side (`pool_cache_id`). Refresh no longer downloads ticket rows or writes per-member export files.
@@ -23,7 +27,8 @@
 - **Ticket trend SLA KPIs:** Four cards (TTFR/TTR × CSSD/CSD) on **Refresh Dashboard** (`POST /run-legacy-dashboard`).
 - **Status gates:** `ttr_status_cssd` (default Closed), `ttr_status_csd` (default Ready For Production Users), `ttfr_status_*` optional.
 - **Aggregates:** Per-card dropdowns `*_aggregate` — `median` (default), `mean`, `p90`.
-- **TTR rule:** `customfield_10317` elapsed, else `resolutiondate − created`, only for tickets in the TTR status gate.
+- **TTR rule:** Prefer `customfield_10317` elapsedTime; optional calendar fallback `resolutiondate − created` via **Include calendar fallbacks** toggle.
+- **TTFR rule:** Prefer `customfield_10318` elapsedTime; optional fallback SLA stop − created. CSD may inherit from linked CSSD. **Force hours view** keeps KPI cards in hours.
 - **TTFR CSD:** Uses linked CSSD ticket’s `customfield_10318` when `issuelinks` point to CSSD; otherwise CSD’s own SLA field.
 - **Snapshots:** `LEGACY_TREND_KEYS` extended with the four SLA hour metrics; aggregate choice stored in snapshot `params`.
 

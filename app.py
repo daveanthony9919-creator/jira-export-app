@@ -1251,6 +1251,15 @@ HTML = """
         <div id="legacyArchiveBanner" class="archive-banner" hidden></div>
         <h2>Trends</h2>
         <p id="legacyReportPeriod" class="small" style="margin:4px 0 12px;color:var(--muted);">Report period: set Start and End in Report Settings.</p>
+        <div class="row" id="legacySlaViewToggles" style="margin:0 0 12px;gap:16px;flex-wrap:wrap;align-items:center;">
+          <label class="check" title="When checked, TTFR/TTR cards always show hours (e.g. 61.0h) instead of auto-switching to days.">
+            <input type="checkbox" id="legacySlaDisplayHoursToggle" name="sla_display_hours_ui" /> Force hours view
+          </label>
+          <label class="check" title="When checked, TTFR/TTR may use calendar fallbacks if Jira SLA elapsed time is missing. Requires Refresh Dashboard.">
+            <input type="checkbox" id="legacySlaUseFallbackToggle" name="sla_use_fallback_ui" /> Include calendar fallbacks
+          </label>
+          <span id="legacySlaToggleHint" class="small" style="color:var(--muted);"></span>
+        </div>
         <div class="row kpi-grid" id="legacyKpis"></div>
         <h3 style="margin:0 0 8px;">Created / Updated / Resolved Trends</h3>
         <div class="legacy-chart-wrap daily" title="Tickets from your legacy query: how many were created, updated, or resolved on each day in the chart window.">
@@ -1312,12 +1321,19 @@ HTML = """
             <div class="field"><label>Max Issues (0 = all)</label><input type="number" name="max_issues" value="0" min="0" /></div>
             <div class="field full" style="margin-top:12px;">
               <h3 style="margin:0 0 8px;">SLA status gates (Ticket trend cards)</h3>
-              <p class="small" style="margin:0 0 10px;color:var(--muted);">Comma-separated Jira status names. TTR uses customfield_10317 or resolutiondate − created. TTFR uses customfield_10318; CSD can inherit from linked CSSD.</p>
+              <p class="small" style="margin:0 0 10px;color:var(--muted);">Comma-separated Jira status names. Prefer Jira SLA elapsed time (<code>customfield_10317</code> / <code>customfield_10318</code>). Optional calendar fallbacks can be enabled below. CSD TTFR can inherit from linked CSSD.</p>
             </div>
             <div class="field"><label>TTR CSSD status</label><input name="ttr_status_cssd" value="Closed" title="Only CSSD tickets in these statuses count toward TTR CSSD." /></div>
             <div class="field"><label>TTR CSD status</label><input name="ttr_status_csd" value="Ready For Production Users" title="Only CSD tickets in these statuses count toward TTR CSD." /></div>
             <div class="field"><label>TTFR CSSD status</label><input name="ttfr_status_cssd" placeholder="Blank = any with TTFR SLA" title="Leave blank to include any CSSD ticket with Time to First Response SLA data." /></div>
             <div class="field"><label>TTFR CSD status</label><input name="ttfr_status_csd" placeholder="Blank = linked CSSD or own SLA" title="Leave blank for linked CSSD TTFR or CSD own SLA when no link." /></div>
+            <div class="field full" style="margin-top:8px;">
+              <p class="small" style="margin:0 0 8px;color:var(--muted);">Display and calculation options for Ticket trend SLA cards.</p>
+              <div class="row">
+                <label class="check"><input type="checkbox" name="sla_display_hours" /> Force hours view (no auto days)</label>
+                <label class="check"><input type="checkbox" name="sla_use_fallback" /> Include calendar fallbacks (TTFR: stop−created; TTR: resolutiondate−created)</label>
+              </div>
+            </div>
             <div class="field full" style="margin-top:8px;">
               <p class="small" style="margin:0 0 8px;color:var(--muted);">Rollup across matching tickets: median (typical), mean (average), or 90th percentile.</p>
             </div>
@@ -1444,7 +1460,7 @@ HTML = """
               <li><strong>Created / Updated / Resolved:</strong> Line chart by day. <strong>Ticket Labels:</strong> Current bar + label trend line chart from saved reports.</li>
               <li><strong>TTFR / TTR cards:</strong> Subline shows ▲/▼ % vs the <strong>prior saved official report</strong> (lower hours = green).</li>
               <li><strong>TTFR / TTR CSSD &amp; CSD:</strong> Configure status gates and aggregate (median, mean, or 90th percentile) under Report Settings, then <strong>Refresh Dashboard</strong>.</li>
-              <li><strong>TTR:</strong> Jira Time to Resolution SLA (<code>customfield_10317</code>) or resolution date minus created; only tickets in your TTR status list.</li>
+              <li><strong>TTR / TTFR:</strong> Prefer Jira SLA elapsed time (<code>customfield_10317</code> / <code>customfield_10318</code>). Optional <strong>Include calendar fallbacks</strong> uses stop−created (TTFR) or resolutiondate−created (TTR). Use <strong>Force hours view</strong> to always show hours on cards.</li>
               <li><strong>TTFR CSD:</strong> Uses linked CSSD first-response time when a CSSD link exists.</li>
             </ul>
           </div>
@@ -1773,6 +1789,8 @@ function formToObject(form) {
   obj.include_comments = form.include_comments.checked;
   obj.include_workflow_events = form.include_workflow_events.checked;
   obj.verify_ssl = form.verify_ssl.checked;
+  if (form.sla_display_hours) obj.sla_display_hours = form.sla_display_hours.checked;
+  if (form.sla_use_fallback) obj.sla_use_fallback = form.sla_use_fallback.checked;
   return obj;
 }
 
@@ -1800,6 +1818,7 @@ function objectToForm(form, params, skipKeys) {
     }
     applied += 1;
   }
+  if (form.id === "exportForm") syncLegacySlaTogglesFromForm();
   return applied;
 }
 
@@ -3727,10 +3746,10 @@ const LEGACY_KPI_TITLES = [
   "Total status changes counted across those issues.",
   "Total comments counted on those issues.",
   "Number of calendar days in this result set that have at least one created ticket.",
-  "TTFR CSSD: rollup of per-ticket hours (aggregate chosen in settings).",
-  "TTFR CSD: linked CSSD SLA when present, else CSD customfield_10318.",
-  "TTR CSSD: customfield_10317 else resolutiondate − created, for tickets in TTR status gate.",
-  "TTR CSD: customfield_10317 else resolutiondate − created, for tickets in TTR status gate.",
+  "TTFR CSSD: Jira SLA elapsedTime (optional calendar fallback if enabled).",
+  "TTFR CSD: linked CSSD SLA when present, else CSD SLA (optional fallback if enabled).",
+  "TTR CSSD: Jira SLA elapsedTime for TTR status gate (optional resolutiondate−created fallback).",
+  "TTR CSD: Jira SLA elapsedTime for TTR status gate (optional resolutiondate−created fallback).",
 ];
 
 function legacySlaAggregateLabel(method) {
@@ -3740,16 +3759,42 @@ function legacySlaAggregateLabel(method) {
   return "median";
 }
 
+function getLegacySlaDisplayHours() {
+  const formEl = document.querySelector('#exportForm input[name="sla_display_hours"]');
+  if (formEl) return !!formEl.checked;
+  const uiEl = document.getElementById("legacySlaDisplayHoursToggle");
+  return uiEl ? !!uiEl.checked : false;
+}
+
+function syncLegacySlaTogglesFromForm() {
+  const form = document.getElementById("exportForm");
+  if (!form) return;
+  const hoursUi = document.getElementById("legacySlaDisplayHoursToggle");
+  const fallbackUi = document.getElementById("legacySlaUseFallbackToggle");
+  if (form.sla_display_hours && hoursUi) hoursUi.checked = form.sla_display_hours.checked;
+  if (form.sla_use_fallback && fallbackUi) fallbackUi.checked = form.sla_use_fallback.checked;
+}
+
+function syncLegacySlaTogglesToForm() {
+  const form = document.getElementById("exportForm");
+  if (!form) return;
+  const hoursUi = document.getElementById("legacySlaDisplayHoursToggle");
+  const fallbackUi = document.getElementById("legacySlaUseFallbackToggle");
+  if (form.sla_display_hours && hoursUi) form.sla_display_hours.checked = hoursUi.checked;
+  if (form.sla_use_fallback && fallbackUi) form.sla_use_fallback.checked = fallbackUi.checked;
+}
+
 function formatLegacySlaHours(hours) {
   if (hours == null || Number.isNaN(Number(hours))) return "--";
   const h = Number(hours);
-  if (h < 48) return `${h.toFixed(1)}h`;
+  if (getLegacySlaDisplayHours() || h < 48) return `${h.toFixed(1)}h`;
   return `${(h / 24).toFixed(1)}d`;
 }
 
 function renderLegacyKpis(kpis) {
   const container = document.getElementById("legacyKpis");
   if (!container) return;
+  syncLegacySlaTogglesFromForm();
   const slaSub = (count, aggregate) => {
     const agg = legacySlaAggregateLabel(aggregate);
     const n = count != null && count > 0 ? `${count} ticket(s)` : "no matching tickets";
@@ -3872,6 +3917,11 @@ async function refreshLegacyDashboard(payload) {
   const warningLines = data.warnings || [];
   const insightLines = data.insights || [];
   document.getElementById("legacyInsights").textContent = [...warningLines, ...insightLines].join("\\n");
+  const hint = document.getElementById("legacySlaToggleHint");
+  if (hint) {
+    const fb = !!(payload && payload.sla_use_fallback);
+    hint.textContent = fb ? "Using Jira elapsed time + calendar fallbacks." : "Using Jira SLA elapsed time only.";
+  }
   updateLegacyReportPeriodLabel();
 }
 
@@ -4234,7 +4284,38 @@ if (teamPostureFormEl) {
 const exportFormEl = document.getElementById("exportForm");
 if (exportFormEl) {
   exportFormEl.addEventListener("input", updateLegacyReportPeriodLabel);
-  exportFormEl.addEventListener("change", updateLegacyReportPeriodLabel);
+  exportFormEl.addEventListener("change", (e) => {
+    updateLegacyReportPeriodLabel();
+    const name = e.target && e.target.name;
+    if (name === "sla_display_hours" || name === "sla_use_fallback") {
+      syncLegacySlaTogglesFromForm();
+      if (name === "sla_display_hours" && latestLegacyPayload && latestLegacyPayload.kpis) {
+        renderLegacyKpis(latestLegacyPayload.kpis);
+      }
+      if (name === "sla_use_fallback") {
+        const hint = document.getElementById("legacySlaToggleHint");
+        if (hint) hint.textContent = "Fallback change — click Refresh Dashboard to recalculate.";
+      }
+    }
+  });
+}
+
+const legacyHoursToggle = document.getElementById("legacySlaDisplayHoursToggle");
+const legacyFallbackToggle = document.getElementById("legacySlaUseFallbackToggle");
+if (legacyHoursToggle) {
+  legacyHoursToggle.addEventListener("change", () => {
+    syncLegacySlaTogglesToForm();
+    if (latestLegacyPayload && latestLegacyPayload.kpis) {
+      renderLegacyKpis(latestLegacyPayload.kpis);
+    }
+  });
+}
+if (legacyFallbackToggle) {
+  legacyFallbackToggle.addEventListener("change", () => {
+    syncLegacySlaTogglesToForm();
+    const hint = document.getElementById("legacySlaToggleHint");
+    if (hint) hint.textContent = "Fallback change — click Refresh Dashboard to recalculate.";
+  });
 }
 
 teamMembers = loadTeamMembersFromStorage();
@@ -4777,10 +4858,13 @@ def issue_status_matches_gate(issue: Dict[str, Any], allowed_statuses: List[str]
     return status in allowed_statuses
 
 
-def ttfr_hours_from_fields(fields: Dict[str, Any]) -> Optional[float]:
+def ttfr_hours_from_fields(fields: Dict[str, Any], use_fallback: bool = False) -> Optional[float]:
+    """TTFR hours from Jira SLA elapsedTime.millis; optional calendar fallback (stop − created)."""
     hours = parse_sla_elapsed_hours(fields, JIRA_SLA_TTFR_FIELD)
     if hours is not None:
         return hours
+    if not use_fallback:
+        return None
     _, _, stop = extract_sla(fields, JIRA_SLA_TTFR_FIELD)
     if not stop:
         return None
@@ -4792,16 +4876,28 @@ def ttfr_hours_from_fields(fields: Dict[str, Any]) -> Optional[float]:
     return None
 
 
-def ttr_hours_from_issue(issue: Dict[str, Any]) -> Optional[float]:
+def ttr_hours_from_issue(issue: Dict[str, Any], use_fallback: bool = False) -> Optional[float]:
+    """TTR hours from Jira SLA elapsedTime.millis; optional calendar fallback (resolutiondate − created)."""
     fields = issue.get("fields") or {}
     hours = parse_sla_elapsed_hours(fields, JIRA_SLA_TTR_FIELD)
     if hours is not None:
         return hours
+    if not use_fallback:
+        return None
     created_dt = get_issue_created_datetime(issue)
     resolved_dt = parse_jira_datetime(fields.get("resolutiondate") or "")
     if created_dt and resolved_dt:
         return (resolved_dt - created_dt).total_seconds() / 3600.0
     return None
+
+
+def parse_bool_param(params: Dict[str, Any], key: str, default: bool = False) -> bool:
+    val = params.get(key, default)
+    if isinstance(val, bool):
+        return val
+    if val is None:
+        return default
+    return str(val).strip().lower() in ("1", "true", "yes", "on")
 
 
 def find_linked_cssd_key(issue: Dict[str, Any]) -> Optional[str]:
@@ -4916,6 +5012,7 @@ def compute_legacy_sla_kpis(
     ttfr_csd_agg = parse_legacy_aggregate(params.get("ttfr_csd_aggregate"))
     ttr_cssd_agg = parse_legacy_aggregate(params.get("ttr_cssd_aggregate"))
     ttr_csd_agg = parse_legacy_aggregate(params.get("ttr_csd_aggregate"))
+    use_fallback = parse_bool_param(params, "sla_use_fallback", False)
 
     csd_needing_cssd: List[str] = []
     csd_issues: List[Dict[str, Any]] = []
@@ -4941,11 +5038,11 @@ def compute_legacy_sla_kpis(
 
         if project == "CSSD":
             if issue_status_matches_gate(issue, ttfr_cssd_gate):
-                hours = ttfr_hours_from_fields(fields)
+                hours = ttfr_hours_from_fields(fields, use_fallback=use_fallback)
                 if hours is not None:
                     ttfr_cssd_hours.append(hours)
             if issue_status_matches_gate(issue, ttr_cssd_gate):
-                hours = ttr_hours_from_issue(issue)
+                hours = ttr_hours_from_issue(issue, use_fallback=use_fallback)
                 if hours is not None:
                     ttr_cssd_hours.append(hours)
 
@@ -4954,15 +5051,18 @@ def compute_legacy_sla_kpis(
                 hours = None
                 cssd_key = find_linked_cssd_key(issue)
                 if cssd_key and cssd_key in cssd_by_key:
-                    hours = ttfr_hours_from_fields(cssd_by_key[cssd_key].get("fields") or {})
+                    hours = ttfr_hours_from_fields(
+                        cssd_by_key[cssd_key].get("fields") or {},
+                        use_fallback=use_fallback,
+                    )
                     if hours is not None:
                         ttfr_csd_from_link += 1
                 if hours is None:
-                    hours = ttfr_hours_from_fields(fields)
+                    hours = ttfr_hours_from_fields(fields, use_fallback=use_fallback)
                 if hours is not None:
                     ttfr_csd_hours.append(hours)
             if issue_status_matches_gate(issue, ttr_csd_gate):
-                hours = ttr_hours_from_issue(issue)
+                hours = ttr_hours_from_issue(issue, use_fallback=use_fallback)
                 if hours is not None:
                     ttr_csd_hours.append(hours)
 
@@ -5001,6 +5101,7 @@ def compute_legacy_sla_kpis(
             "ttr_cssd": ttr_cssd_agg,
             "ttr_csd": ttr_csd_agg,
         },
+        "sla_use_fallback": use_fallback,
     }
     return kpis, warnings
 
