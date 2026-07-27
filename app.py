@@ -1298,6 +1298,11 @@ HTML = """
           <pre id="legacyStatusSummary">Run a legacy dashboard refresh.</pre>
         </div>
       </div>
+      <div class="card" style="margin-top:12px;" title="Jira label counts for tickets in your Ticket trend query, with share of label occurrences.">
+        <h2>Labels Summary</h2>
+        <p class="small" style="margin:0 0 8px;color:var(--muted);">Top 10 labels in the current query (tickets may have multiple labels). Sorted by count.</p>
+        <pre id="legacyLabelsSummary">Run a legacy dashboard refresh.</pre>
+      </div>
       <div id="legacySettingsCard" class="card collapse-card report-scope-legacy" style="margin-top:18px;">
         <button type="button" class="muted-btn collapse-toggle" data-collapse-target="legacySettings" aria-expanded="false" aria-controls="legacySettings">Show Report Variables & Settings</button>
         <div id="legacySettings" class="collapse-body" hidden>
@@ -1457,7 +1462,7 @@ HTML = """
           <div class="notes-card">
             <h3>Ticket Trend SLA Cards</h3>
             <ul>
-              <li><strong>Created / Updated / Resolved:</strong> Line chart by day. <strong>Ticket Labels:</strong> Current bar + label trend line chart from saved reports.</li>
+              <li><strong>Created / Updated / Resolved:</strong> Line chart by day. <strong>Ticket Labels:</strong> Current bar + label trend line chart from saved reports. <strong>Labels Summary:</strong> top 10 labels by count with share (copy-friendly for weekly trend notes).</li>
               <li><strong>TTFR / TTR cards:</strong> Subline shows ▲/▼ % vs the <strong>prior saved official report</strong> (lower hours = green).</li>
               <li><strong>TTFR / TTR CSSD &amp; CSD:</strong> Configure status gates and aggregate (median, mean, or 90th percentile) under Report Settings, then <strong>Refresh Dashboard</strong>.</li>
               <li><strong>TTR / TTFR:</strong> Prefer Jira SLA elapsed time (<code>customfield_10317</code> / <code>customfield_10318</code>). Optional <strong>Include calendar fallbacks</strong> uses stop−created (TTFR) or resolutiondate−created (TTR). Use <strong>Force hours view</strong> to always show hours on cards.</li>
@@ -1926,6 +1931,8 @@ async function rerunWithSavedReportSettings(reportUiKey) {
     await runCsmsExecutiveReport();
   } else if (reportUiKey === "legacy") {
     document.getElementById("legacyInsights").textContent = "Refreshing dashboard…";
+    const labelsSum = document.getElementById("legacyLabelsSummary");
+    if (labelsSum) labelsSum.textContent = "Refreshing…";
     await refreshLegacyDashboard(formToObject(document.getElementById("exportForm")));
   } else {
     await onTeamRefreshAllClick();
@@ -3126,6 +3133,7 @@ function hydrateLegacyFromDisplay(data) {
   renderLegacyKpis(data.kpis || {});
   renderLegacyCharts(data.charts || {});
   renderLegacyStatusSummary(data.charts || {});
+  renderLegacyLabelsSummary(data.charts || {});
   void refreshLegacyLabelCharts((data.charts || {}).label_distribution || {});
   const lines = [...(data.warnings || []), ...(data.insights || [])];
   document.getElementById("legacyInsights").textContent = lines.join("\\n") || "Archived report.";
@@ -3896,6 +3904,27 @@ function renderLegacyStatusSummary(charts) {
   document.getElementById("legacyStatusSummary").textContent = lines.join("\\n");
 }
 
+function renderLegacyLabelsSummary(charts) {
+  const el = document.getElementById("legacyLabelsSummary");
+  if (!el) return;
+  const labelEntries = Object.entries(charts.label_distribution || {});
+  if (!labelEntries.length) {
+    el.textContent = "No label data available.";
+    return;
+  }
+  const sorted = labelEntries.sort((a, b) => Number(b[1]) - Number(a[1]));
+  const top = sorted.slice(0, 10);
+  const total = sorted.reduce((acc, [, v]) => acc + Number(v || 0), 0) || 1;
+  const lines = top.map(([name, count]) => {
+    const pct = ((Number(count) / total) * 100).toFixed(1);
+    return `${name}: ${count} (${pct}%)`;
+  });
+  if (sorted.length > 10) {
+    lines.push(`… and ${sorted.length - 10} more label(s)`);
+  }
+  el.textContent = lines.join("\\n");
+}
+
 async function refreshLegacyDashboard(payload) {
   updateLegacyReportPeriodLabel();
   const res = await fetch("/run-legacy-dashboard", {
@@ -3912,6 +3941,7 @@ async function refreshLegacyDashboard(payload) {
   renderLegacyKpis(data.kpis || {});
   renderLegacyCharts(data.charts || {});
   renderLegacyStatusSummary(data.charts || {});
+  renderLegacyLabelsSummary(data.charts || {});
   await refreshLegacyLabelCharts((data.charts || {}).label_distribution || {});
   await refreshLegacySlaTrends(null, "live");
   const warningLines = data.warnings || [];
@@ -3997,6 +4027,8 @@ document.getElementById("csmsExportPdf").addEventListener("click", () => openCsm
 document.getElementById("legacyRefreshBtn").addEventListener("click", async () => {
   const payload = formToObject(document.getElementById("exportForm"));
   document.getElementById("legacyInsights").textContent = "Refreshing dashboard...";
+  const labelsSum = document.getElementById("legacyLabelsSummary");
+  if (labelsSum) labelsSum.textContent = "Refreshing…";
   await refreshLegacyDashboard(payload);
 });
 
